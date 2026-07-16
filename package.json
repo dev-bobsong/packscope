@@ -1,15 +1,34 @@
 {
   "name": "unpack",
   "version": "1.0.0",
-  "description": "",
+  "description": "Unpack a mono webpack/rspack bundle into human-readable, individually-executable CommonJS modules.",
   "main": "index.js",
+  "bin": {
+    "unpack": "unpack.js"
+  },
+  "files": [
+    "unpack.js",
+    "README.md"
+  ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "webpack",
+    "rspack",
+    "bundle",
+    "unpack",
+    "decompile",
+    "reverse-engineering",
+    "mono-bundle",
+    "cli"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=14.0.0"
+  },
   "dependencies": {
     "acorn": "^8.17.0",
     "escodegen": "^2.1.0",

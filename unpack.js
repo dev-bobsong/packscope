@@ -511,6 +511,7 @@ function writePackageJson(outDir, baseName) {
     version: '0.0.0',
     private: true,
     type: 'commonjs',
+    main: 'index.js',
     bin: { [baseName]: 'index.js' },
   };
   fs.writeFileSync(path.join(outDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
