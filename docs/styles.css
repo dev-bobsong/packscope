@@ -156,6 +156,9 @@ pre code {
 }
 
 .nav-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--text);
   color: var(--bg) !important;
   padding: 8px 16px;
@@ -165,6 +168,11 @@ pre code {
 
 .nav-cta:hover {
   background: var(--accent);
+  text-decoration: none;
+}
+
+.github-icon {
+  fill: currentColor;
 }
 
 /* Hero */
@@ -269,6 +277,10 @@ pre code {
 
 .btn-secondary:hover {
   background: var(--bg-elevated);
+}
+
+.btn {
+  gap: 8px;
 }
 
 .btn-large {
