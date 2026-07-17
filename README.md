@@ -177,3 +177,8 @@ For that reason the **default** output keeps the original minified body slices â
 are still in separate, navigable files with documented param mappings, and they are
 **guaranteed executable**. Use `--beautify` when you want prettier code for reading,
 but be aware it is best-effort.
+
+## License
+
+MIT â€” see [LICENSE](./LICENSE).
+

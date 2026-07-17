@@ -14,7 +14,8 @@
   "files": [
     "packscope.js",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -33,8 +34,8 @@
     "mono-bundle",
     "cli"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "AwareRide",
+  "license": "MIT",
   "type": "commonjs",
   "engines": {
     "node": ">=14.0.0"
