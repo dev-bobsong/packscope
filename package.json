@@ -1,13 +1,13 @@
 {
-  "name": "unpack",
+  "name": "packscope",
   "version": "1.0.0",
-  "description": "Unpack a mono webpack/rspack bundle into human-readable, individually-executable CommonJS modules.",
-  "main": "index.js",
+  "description": "Inspect, analyze, and debug JavaScript bundles from webpack, rspack, rollup, esbuild, and Vite.",
+  "main": "packscope.js",
   "bin": {
-    "unpack": "unpack.js"
+    "packscope": "packscope.js"
   },
   "files": [
-    "unpack.js",
+    "packscope.js",
     "README.md"
   ],
   "scripts": {
@@ -16,9 +16,13 @@
   "keywords": [
     "webpack",
     "rspack",
+    "rollup",
+    "esbuild",
+    "vite",
     "bundle",
     "unpack",
-    "decompile",
+    "inspect",
+    "debug",
     "reverse-engineering",
     "mono-bundle",
     "cli"

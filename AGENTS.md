@@ -1,17 +1,18 @@
-# Agent Work Log — Unpack
+# Agent Work Log — Packscope
 
 ## Goal
 
-Build a tool that unpacks a **mono webpack/rspack bundle** (single 21 MB file) into:
+Build a tool that unpacks a **mono JavaScript bundle** (single ~21 MB file, typically
+from webpack/rspack) into:
 - **Human-readable** per-module files (beautified or at least isolated + documented)
 - **Executable** — the unpacked tree must run identically to the original bundle
 
-Sample target: `./examples/codebuddy.js` (4339 modules, entry `29570`, one external `chokidar`).
+Sample target: `./examples/node_large_example.js` (4339 modules, entry `29570`, one external `chokidar`).
 
 ## What Exists Prior
 
-- `split-codebuddy.js` in `dist/` — slices the bundle into raw minified fragments + header + runtime + manifest + rebuild script. **Not beautified, not individually executable.**
-- Prior work in `dist/codebuddy-next/` already has 4340 raw fragment files. Our tool supersedes this with a proper executable loader.
+- `split-legacy.js` in `dist/` — slices the bundle into raw minified fragments + header + runtime + manifest + rebuild script. **Not beautified, not individually executable.**
+- Prior work in `dist/legacy-next/` already has 4340 raw fragment files. Our tool supersedes this with a proper executable loader.
 
 ## Architecture Decisions
 
@@ -50,7 +51,7 @@ These are **best-effort** and documented as such.
 
 ### 4. `node_modules` symlink
 
-The bundle patches `globalThis.require = createRequire(__filename)` (module `29570`). In the unpacked tree `__filename` points to `out/modules/29570.js` or `out/codebuddy-unpacked.js`, so `createRequire` resolves packages from `out/` instead of the original `dist/` directory. We create a `node_modules` symlink in `out/` pointing to the source project's `node_modules` to give global `require('pkg')` calls a chance to resolve.
+The bundle patches `globalThis.require = createRequire(__filename)` (module `29570`). In the unpacked tree `__filename` points to `out/modules/29570.js` or `out/bundle-unpacked.js`, so `createRequire` resolves packages from `out/` instead of the original `dist/` directory. We create a `node_modules` symlink in `out/` pointing to the source project's `node_modules` to give global `require('pkg')` calls a chance to resolve.
 
 ## Verification
 
@@ -58,7 +59,7 @@ The bundle patches `globalThis.require = createRequire(__filename)` (module `295
 cd /path/to/packscope
 
 # Clean unpack
-node unpack.js ./examples/codebuddy.js ./out
+npx packscope ./examples/node_large_example.js ./out
 
 # Per-module loader
 node out/index.js --version        # → 2.106.4 ✅
@@ -66,13 +67,13 @@ node out/index.js --help           # → clean ✅
 node out/index.js --print "hello"  # → response ✅
 
 # Reconstructed single bundle
-node out/rebuild.js codebuddy-unpacked.js
-node out/codebuddy-unpacked.js --version   # → 2.106.4 ✅
+node out/rebuild.js bundle-unpacked.js
+node out/bundle-unpacked.js --version   # → 2.106.4 ✅
 
 # Edit → rebuild → run
 echo "// patched" >> out/modules/92367.js
-node out/rebuild.js codebuddy-patched.js
-node out/codebuddy-patched.js --version    # → 2.106.4 ✅
+node out/rebuild.js bundle-patched.js
+node out/bundle-patched.js --version    # → 2.106.4 ✅
 ```
 
 ## Output Structure

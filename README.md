@@ -1,7 +1,7 @@
-# Unpack — mono webpack/rspack or ES module bundle → human-readable & executable files
+# Packscope — inspect, analyze, and debug JavaScript bundles
 
-A small Node tool that takes a single ("mono") JavaScript bundle — webpack/rspack
-script bundles **or** Vite/rollup/Angular-esbuild ES-module bundles — and unpacks it into:
+A small Node CLI that unpacks a single ("mono") JavaScript bundle — from
+**webpack**, **rspack**, **rollup**, **esbuild**, or **Vite** — into:
 
 - **One file per module** (`modules/<id>.js`) for webpack/rspack, or **one file per chunk** (`chunks/<name>.js`) for ES-module bundles.
 - **A loader** (`runtime.js` + `index.js`) that reconstructs the original webpack/rspack bundle shape using the original UMD header and webpack runtime verbatim, so the unpacked tree **runs identically** to the original bundle.
@@ -11,19 +11,19 @@ script bundles **or** Vite/rollup/Angular-esbuild ES-module bundles — and unpa
 ## Install
 
 ```bash
-npm install          # installs acorn + escodegen
+npm install          # installs acorn + escodegen + js-beautify
 ```
 
 ## Usage
 
 ```bash
-node unpack.js <bundle.js|URL> <outDir> [options]
+npx packscope <bundle.js|URL> <outDir> [options]
 
-# example (the codebuddy CLI bundle)
-node unpack.js ./examples/codebuddy.js ./out
+# example (local webpack/rspack CLI bundle)
+npx packscope ./examples/node_large_example.js ./out
 
 # example from a remote URL
-node unpack.js https://static.thingsboard.cloud/main-FYV7DR6V.js ./out
+npx packscope https://example.com/app.js ./out
 ```
 
 Options:
@@ -54,12 +54,13 @@ package.json            # makes <outDir> a self-contained node package
 node_modules -> ...     # symlink to the source project's node_modules (best-effort)
 ```
 
-### ES module bundles (Vite / rollup / Angular esbuild)
+### ES module bundles (rollup / esbuild / Vite)
 
 ```
-<entry>.js              # the entry chunk (e.g. main-FYV7DR6V.js), import specifiers rewritten locally
+<entry>.js              # the entry chunk, import specifiers rewritten locally
 chunks/                 # all statically or dynamically imported JS chunks
 sources/                # original source modules extracted from source maps (when available)
+decomposed/             # best-effort class/module extracts for reading/navigation (with --decompose)
 assets/                 # referenced source maps / asset URLs (when --fetch-assets is on)
 index.html              # simple HTML page that loads the entry as a module
 manifest.json           # bundle type, chunk graph, source list, asset list
@@ -69,30 +70,35 @@ package.json            # type: "module" for the unpacked tree
 ES module bundles are already split into chunks by the bundler. Further splitting
 into individual original modules requires source maps; when a chunk contains an
 inline or external source map, the tool extracts each original source into
-`sources/`. Production builds often omit source maps, so only chunk-level output
-may be available.
+`sources/`.
+
+Production builds often omit source maps. In that case you can use `--decompose`
+to get a read-only, best-effort decomposition of each chunk into top-level
+classes, services, functions, and CommonJS-style module wrappers. The files in
+`decomposed/` are NOT executable — they are for navigation and grep/inspection
+only.
 
 ## Unpacking from a URL
 
 You can pass an `http://` or `https://` URL as the bundle argument. The file is
-downloaded to a local cache directory (`.unpack-cache/`) and then unpacked as
+downloaded to a local cache directory (`.packscope-cache/`) and then unpacked as
 usual:
 
 ```bash
 # webpack/rspack bundle
-node unpack.js https://example.com/app.js ./out
+npx packscope https://example.com/app.js ./out
 
-# ES module bundle (e.g. ThingsBoard / Angular esbuild)
-node unpack.js https://static.thingsboard.cloud/main-FYV7DR6V.js ./out
+# ES module bundle (rollup / esbuild / Vite)
+npx packscope https://example.com/main-ABCD1234.js ./out
 
 # ES module bundle with pretty-printed chunks
-node unpack.js https://static.thingsboard.cloud/main-FYV7DR6V.js ./out --beautify
+npx packscope https://example.com/main-ABCD1234.js ./out --beautify
 
 # ES module bundle with best-effort per-class/per-module decomposition
-node unpack.js https://static.thingsboard.cloud/main-FYV7DR6V.js ./out --decompose
+npx packscope https://example.com/main-ABCD1234.js ./out --decompose
 
 # both
-node unpack.js https://static.thingsboard.cloud/main-FYV7DR6V.js ./out --beautify --decompose
+npx packscope https://example.com/main-ABCD1234.js ./out --beautify --decompose
 ```
 
 For ES module bundles, the tool automatically resolves and downloads all
@@ -105,7 +111,7 @@ are also downloaded into `out/assets/`. Failures are logged but do not stop the
 unpack. To skip passive asset downloads:
 
 ```bash
-node unpack.js https://example.com/bundle.js ./out --no-fetch-assets
+npx packscope https://example.com/bundle.js ./out --no-fetch-assets
 ```
 
 Chunk downloads for ES module bundles happen regardless of `--fetch-assets`,
@@ -134,8 +140,8 @@ cd out && python3 -m http.server 8080
 ## Rebuild a single bundle (after editing modules/)
 
 ```bash
-node out/rebuild.js codebuddy-edited.js
-node codebuddy-edited.js --version
+node out/rebuild.js bundle-edited.js
+node bundle-edited.js --version
 ```
 
 ## How it works

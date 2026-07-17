@@ -2,11 +2,11 @@
 'use strict';
 
 /**
- * unpack.js — unpack a mono webpack/rspack bundle or ES module bundle
- * (Vite/rollup/Angular esbuild) into human-readable, individually-executable
- * modules plus a loader.
+ * packscope.js — inspect, analyze, and debug JavaScript bundles from
+ * webpack/rspack/rollup/esbuild/Vite by unpacking them into human-readable,
+ * individually-executable modules plus a loader.
  *
- * Usage: node unpack.js <bundle.js|URL> <outDir> [options]
+ * Usage: npx packscope <bundle.js|URL> <outDir> [options]
  */
 
 const fs = require('fs');
@@ -48,7 +48,7 @@ function ensureDir(dir) {
 }
 
 function getCacheDir() {
-  const dir = path.resolve('.unpack-cache');
+  const dir = path.resolve('.packscope-cache');
   ensureDir(dir);
   return dir;
 }
@@ -80,7 +80,7 @@ function fetchUrl(url, options = {}) {
       });
       req.on('error', (err) => {
         if (remaining > 0) {
-          console.warn(`[unpack] retry ${url} (${remaining} left): ${err.message}`);
+          console.warn(`[packscope] retry ${url} (${remaining} left): ${err.message}`);
           setTimeout(() => attempt(remaining - 1), delay);
         } else {
           reject(err);
@@ -90,7 +90,7 @@ function fetchUrl(url, options = {}) {
         req.destroy();
         const err = new Error(`Timeout fetching ${url}`);
         if (remaining > 0) {
-          console.warn(`[unpack] retry ${url} (${remaining} left): ${err.message}`);
+          console.warn(`[packscope] retry ${url} (${remaining} left): ${err.message}`);
           setTimeout(() => attempt(remaining - 1), delay);
         } else {
           reject(err);
@@ -152,18 +152,18 @@ function parseArgs(argv) {
 }
 
 const HELP = `
-unpack.js — unpack a mono webpack/rspack or ES module bundle into readable,
-executable modules.
+packscope — inspect, analyze, and debug JavaScript bundles from webpack, rspack,
+rollup, esbuild, and Vite.
 
 Usage:
-  node unpack.js <bundle.js|URL> <outDir> [options]
+  npx packscope <bundle.js|URL> <outDir> [options]
 
 The bundle argument may be a local file path or an http(s) URL. URLs are downloaded
 into a local cache before unpacking.
 
 Bundle type is auto-detected: webpack/rspack script bundles are reconstructed with
-per-module delegators; ES module bundles (Vite / rollup / Angular esbuild) have their
-imported chunks resolved and downloaded recursively.
+per-module delegators; ES module bundles have their imported chunks resolved and
+downloaded recursively.
 
 Options:
   --no-rename        keep obfuscated wrapper params (eA, el, ec) [DEFAULT]
@@ -440,29 +440,29 @@ async function main() {
     const cacheDir = getCacheDir();
     const cachedName = urlBasename(bundleUrl);
     bundlePath = path.join(cacheDir, cachedName);
-    console.log(`[unpack] downloading ${bundleUrl} ...`);
+    console.log(`[packscope] downloading ${bundleUrl} ...`);
     try {
       const info = await downloadUrl(bundleUrl, bundlePath);
-      console.log(`[unpack] downloaded ${info.size} bytes -> ${bundlePath}`);
+      console.log(`[packscope] downloaded ${info.size} bytes -> ${bundlePath}`);
     } catch (e) {
-      console.error(`[unpack] failed to download ${bundleUrl}: ${e.message}`);
+      console.error(`[packscope] failed to download ${bundleUrl}: ${e.message}`);
       process.exit(1);
     }
   } else {
     bundlePath = path.resolve(args.bundle);
     if (fetchAssets === null) fetchAssets = false;
     if (!fs.existsSync(bundlePath)) {
-      console.error(`[unpack] bundle not found: ${bundlePath}`);
+      console.error(`[packscope] bundle not found: ${bundlePath}`);
       process.exit(1);
     }
   }
 
-  console.log(`[unpack] reading ${bundlePath} ...`);
+  console.log(`[packscope] reading ${bundlePath} ...`);
   const source = fs.readFileSync(bundlePath, 'utf8');
-  console.log(`[unpack] bundle size: ${source.length} bytes`);
+  console.log(`[packscope] bundle size: ${source.length} bytes`);
 
   const bundleType = detectBundleType(source);
-  console.log(`[unpack] detected bundle type: ${bundleType}`);
+  console.log(`[packscope] detected bundle type: ${bundleType}`);
   if (bundleType === 'esm') {
     fs.mkdirSync(outDir, { recursive: true });
     const baseRef = bundleUrl || pathToFileURL(bundlePath).href;
@@ -470,10 +470,10 @@ async function main() {
     return;
   }
 
-  console.log('[unpack] parsing with acorn ...');
+  console.log('[packscope] parsing with acorn ...');
   const t0 = Date.now();
   const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'script' });
-  console.log(`[unpack] parsed in ${Date.now() - t0} ms`);
+  console.log(`[packscope] parsed in ${Date.now() - t0} ms`);
 
   const declarator = findWebpackModulesNode(ast);
   if (!declarator || !declarator.init || declarator.init.type !== 'ObjectExpression') {
@@ -482,7 +482,7 @@ async function main() {
   const objExpr = declarator.init;
   const modulesObjStart = objExpr.start; // index of '{'
   const modulesObjEnd = objExpr.end; // index after '}'
-  console.log(`[unpack] __webpack_modules__ object: ${modulesObjStart}..${modulesObjEnd}`);
+  console.log(`[packscope] __webpack_modules__ object: ${modulesObjStart}..${modulesObjEnd}`);
 
   fs.mkdirSync(outDir, { recursive: true });
   fs.mkdirSync(path.join(outDir, 'modules'), { recursive: true });
@@ -494,8 +494,8 @@ async function main() {
 
   const entry = args.entry || detectEntry(source);
   const externals = detectExternals(source);
-  console.log(`[unpack] entry module: ${entry}`);
-  console.log(`[unpack] externals: ${JSON.stringify(externals)}`);
+  console.log(`[packscope] entry module: ${entry}`);
+  console.log(`[packscope] externals: ${JSON.stringify(externals)}`);
 
   const manifest = {
     source: path.basename(bundlePath),
@@ -517,7 +517,7 @@ async function main() {
         ? String(prop.key.value)
         : null;
     if (keyName === null) {
-      console.warn('[unpack] skipping property without identifier/literal key');
+      console.warn('[packscope] skipping property without identifier/literal key');
       continue;
     }
     const fn = prop.value;
@@ -583,7 +583,7 @@ async function main() {
     });
 
     count++;
-    if (count % 500 === 0) console.log(`[unpack] processed ${count} modules ...`);
+    if (count % 500 === 0) console.log(`[packscope] processed ${count} modules ...`);
   }
 
   manifest.moduleCount = count;
@@ -603,8 +603,8 @@ async function main() {
   writeRebuild(outDir);
   linkNodeModules(outDir, bundlePath);
 
-  console.log(`[unpack] done. ${count} modules -> ${outDir}`);
-  console.log(`[unpack] run with: node ${path.relative(process.cwd(), path.join(outDir, 'index.js'))} --version`);
+  console.log(`[packscope] done. ${count} modules -> ${outDir}`);
+  console.log(`[packscope] run with: node ${path.relative(process.cwd(), path.join(outDir, 'index.js'))} --version`);
 }
 
 function inferName(bodySrc) {
@@ -630,7 +630,7 @@ function beautifyJs(source) {
   try {
     return jsBeautify(source, BEAUTIFY_OPTS);
   } catch (e) {
-    console.warn(`[unpack] beautify failed: ${e.message}`);
+    console.warn(`[packscope] beautify failed: ${e.message}`);
     return source;
   }
 }
@@ -821,7 +821,7 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
               await downloadUrl(mapUrl, smPath);
               map = JSON.parse(fs.readFileSync(smPath, 'utf8'));
             } catch (e) {
-              console.warn(`[unpack]   ! failed to fetch source map ${mapUrl}: ${e.message}`);
+              console.warn(`[packscope]   ! failed to fetch source map ${mapUrl}: ${e.message}`);
             }
           }
         }
@@ -830,7 +830,7 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
     if (!map) return [];
     const extracted = splitFromSourceMap(content, map, outDir, chunkFile);
     if (extracted.length) {
-      console.log(`[unpack]   ~ extracted ${extracted.length} source file(s) from ${path.basename(chunkFile)}`);
+      console.log(`[packscope]   ~ extracted ${extracted.length} source file(s) from ${path.basename(chunkFile)}`);
     }
     return extracted.map((s) => ({ ...s, mapUrl }));
   }
@@ -839,14 +839,14 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
     if (!isFetchableUrl(url)) return;
     if (seenUrls.has(url)) return;
     if (depth > 10) {
-      console.warn(`[unpack] max recursion depth reached, skipping ${url}`);
+      console.warn(`[packscope] max recursion depth reached, skipping ${url}`);
       return;
     }
     seenUrls.add(url);
     const localFile = allocateFile(url, chunksDir, urlToChunkFile);
     try {
       const info = await downloadUrl(url, localFile);
-      console.log(`[unpack]   + chunk ${path.basename(localFile)} (${info.size} bytes) <- ${url}`);
+      console.log(`[packscope]   + chunk ${path.basename(localFile)} (${info.size} bytes) <- ${url}`);
       let content = fs.readFileSync(localFile, 'utf8');
       const imports = collectModuleImports(content, url);
       const childUrls = imports.map((i) => i.resolved).filter(Boolean);
@@ -862,7 +862,7 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
         const units = decomposeChunk(content, localFile, outDir);
         if (units.length) {
           manifest.decomposed.push({ chunk: path.relative(outDir, localFile), units });
-          console.log(`[unpack]   ~ decomposed ${path.basename(localFile)} into ${units.length} unit(s)`);
+          console.log(`[packscope]   ~ decomposed ${path.basename(localFile)} into ${units.length} unit(s)`);
         }
       }
       processedFiles.push({ path: localFile, source: content, baseUrl: url });
@@ -875,7 +875,7 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
         sources,
       });
     } catch (e) {
-      console.warn(`[unpack] failed to fetch chunk ${url}: ${e.message}`);
+      console.warn(`[packscope] failed to fetch chunk ${url}: ${e.message}`);
       manifest.chunks.push({ url, file: null, error: e.message, importer: importerUrl });
     }
   }
@@ -895,7 +895,7 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
     const units = decomposeChunk(rewrittenEntry, entryPath, outDir);
     if (units.length) {
       manifest.decomposed.push({ chunk: path.relative(outDir, entryPath), units });
-      console.log(`[unpack]   ~ decomposed ${path.basename(entryPath)} into ${units.length} unit(s)`);
+      console.log(`[packscope]   ~ decomposed ${path.basename(entryPath)} into ${units.length} unit(s)`);
     }
   }
   processedFiles.unshift({ path: entryPath, source: rewrittenEntry, baseUrl: bundleUrl });
@@ -909,8 +909,8 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
   writeEsModulePackageJson(outDir, entryBaseName);
   writeEsModuleIndexHtml(outDir, entryBaseName);
 
-  console.log(`[unpack] done. ESM bundle unpacked to ${outDir}`);
-  console.log(`[unpack] entry: ${entryBaseName}`);
+  console.log(`[packscope] done. ESM bundle unpacked to ${outDir}`);
+  console.log(`[packscope] entry: ${entryBaseName}`);
 }
 
 function discoverEsModuleAssets(processedFiles, outDir, manifest) {
@@ -930,7 +930,7 @@ function discoverEsModuleAssets(processedFiles, outDir, manifest) {
         const localFile = allocateFile(item.url, assetsDir, urlToAssetFile);
         try {
           const info = await downloadUrl(item.url, localFile);
-          console.log(`[unpack]   + asset ${path.basename(localFile)} (${info.size} bytes) <- ${item.url}`);
+          console.log(`[packscope]   + asset ${path.basename(localFile)} (${info.size} bytes) <- ${item.url}`);
           manifest.assets.push({
             type: item.type,
             url: item.url,
@@ -944,7 +944,7 @@ function discoverEsModuleAssets(processedFiles, outDir, manifest) {
             rewrites.push({ start: item.start, end: item.end, text: JSON.stringify(rel) });
           }
         } catch (e) {
-          console.warn(`[unpack]   ! failed to fetch asset ${item.url}: ${e.message}`);
+          console.warn(`[packscope]   ! failed to fetch asset ${item.url}: ${e.message}`);
           manifest.assets.push({
             type: item.type,
             url: item.url,
@@ -1230,17 +1230,17 @@ async function discoverAndFetchAssets(source, bundleRef, outDir, manifest) {
 
   if (!toFetch.length) return;
 
-  console.log(`[unpack] discovering ${toFetch.length} referenced asset(s) ...`);
+  console.log(`[packscope] discovering ${toFetch.length} referenced asset(s) ...`);
   for (const item of toFetch) {
     if (!isFetchableUrl(item.url)) {
-      console.log(`[unpack] asset ${item.raw} is not a fetchable URL, skipping`);
+      console.log(`[packscope] asset ${item.raw} is not a fetchable URL, skipping`);
       continue;
     }
     const wanted = safeFilename(item.url);
     const destPath = uniqueFilename(assetsDir, wanted);
     try {
       const info = await downloadUrl(item.url, destPath);
-      console.log(`[unpack]   + asset ${path.basename(destPath)} (${info.size} bytes) <- ${item.url}`);
+      console.log(`[packscope]   + asset ${path.basename(destPath)} (${info.size} bytes) <- ${item.url}`);
       manifest.assets.push({
         type: item.type,
         url: item.url,
@@ -1249,7 +1249,7 @@ async function discoverAndFetchAssets(source, bundleRef, outDir, manifest) {
         size: info.size,
       });
     } catch (e) {
-      console.warn(`[unpack]   ! failed to fetch asset ${item.url}: ${e.message}`);
+      console.warn(`[packscope]   ! failed to fetch asset ${item.url}: ${e.message}`);
       manifest.assets.push({
         type: item.type,
         url: item.url,
@@ -1333,7 +1333,7 @@ const acorn = require('acorn');
 
 const outDir = __dirname;
 const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'manifest.json'), 'utf8'));
-const outputName = process.argv[2] || 'codebuddy-unpacked.js';
+const outputName = process.argv[2] || 'bundle-unpacked.js';
 const outputPath = path.join(outDir, outputName);
 
 const parts = [fs.readFileSync(path.join(outDir, 'header.js'), 'utf8')];
@@ -1384,6 +1384,6 @@ function linkNodeModules(outDir, bundlePath) {
 }
 
 main().catch((e) => {
-  console.error('[unpack] error:', e);
+  console.error('[packscope] error:', e);
   process.exit(1);
 });
