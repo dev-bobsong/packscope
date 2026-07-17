@@ -34,7 +34,7 @@ function detectBundleType(source) {
   if (/^\s*(import|export)\b/m.test(source)) {
     return 'esm';
   }
-  return 'webpack'; // fallback; will likely fail parse if truly ESM
+  return 'script'; // generic script bundle (UMD/IIFE/scope-hoisted)
 }
 
 function urlBasename(url) {
@@ -249,15 +249,19 @@ function findWebpackRequireFunction(ast, source) {
           return;
         }
         if (!n.type) return;
-        if (
-          n.type === 'CallExpression' &&
-          n.callee &&
-          n.callee.type === 'MemberExpression' &&
-          !n.callee.computed &&
-          n.callee.property.type === 'Identifier' &&
-          n.callee.property.name === 'call'
-        ) {
-          const inner = n.callee.object;
+        // Webpack/rspack modules are invoked either as <modules>[id].call(this, ...)
+        // or, when minified and no explicit this-binding is needed, as <modules>[id](...).
+        if (n.type === 'CallExpression' && n.callee && n.callee.type === 'MemberExpression') {
+          let inner = null;
+          if (
+            !n.callee.computed &&
+            n.callee.property.type === 'Identifier' &&
+            n.callee.property.name === 'call'
+          ) {
+            inner = n.callee.object;
+          } else if (n.callee.computed) {
+            inner = n.callee;
+          }
           if (
             inner &&
             inner.type === 'MemberExpression' &&
@@ -596,7 +600,8 @@ async function main() {
 
   const declarator = findWebpackModulesDeclarator(ast, source);
   if (!declarator || !declarator.init || declarator.init.type !== 'ObjectExpression') {
-    throw new Error('Could not find `var __webpack_modules__ = {...}` in the bundle');
+    console.log('[packscope] not a webpack/rspack module dictionary; falling back to generic script unpack');
+    return unpackScript(source, bundlePath, bundleUrl, outDir, args);
   }
   const objExpr = declarator.init;
   const modulesObjStart = objExpr.start; // index of '{'
@@ -908,6 +913,49 @@ function decomposeChunk(source, chunkFile, outDir) {
   }
 
   return units;
+}
+
+// ---------------------------------------------------------------------------
+// Generic script bundle fallback (UMD / IIFE / scope-hoisted outputs that do
+// not use a webpack-style modules dictionary). We keep the bundle verbatim so
+// it remains executable, decompose top-level units for readability, and fetch
+// any referenced assets.
+// ---------------------------------------------------------------------------
+async function unpackScript(source, bundlePath, bundleUrl, outDir, args) {
+  ensureDir(outDir);
+  const baseName = path.basename(bundlePath);
+  const bundleFile = path.join(outDir, baseName);
+  let content = source;
+  if (args.beautify) {
+    content = beautifyJs(content);
+  }
+  fs.writeFileSync(bundleFile, content);
+
+  const units = args.decompose ? decomposeChunk(content, baseName, outDir) : [];
+
+  const manifest = {
+    bundleType: 'script',
+    source: baseName,
+    entry: baseName,
+    size: content.length,
+    decomposed: units.length ? [{ chunk: path.relative(outDir, bundleFile), units }] : [],
+    assets: [],
+  };
+
+  if (args.fetchAssets) {
+    await discoverAndFetchAssets(content, bundleUrl || bundlePath, outDir, manifest);
+  }
+
+  fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+
+  const indexCode = `#!/usr/bin/env node\n'use strict';\n// Generic script bundle: the original bundle is kept verbatim as ./${baseName}.\nrequire('./${baseName}');\n`;
+  const indexPath = path.join(outDir, 'index.js');
+  fs.writeFileSync(indexPath, indexCode);
+  fs.chmodSync(indexPath, 0o755);
+
+  writePackageJson(outDir, path.basename(baseName, path.extname(baseName)));
+
+  console.log(`[packscope] done. generic script bundle -> ${outDir}`);
 }
 
 async function unpackEsModule(source, bundleUrl, outDir, args) {
@@ -1409,6 +1457,10 @@ function writeRuntime(outDir, manifest) {
 // (header.js + webpack-runtime.js) is reused verbatim.
 const path = require('path');
 const MODULES_DIR = path.join(__dirname, 'modules');
+// UMD bundles built for the browser reference 'self'. Make them runnable in Node.
+if (typeof self === 'undefined') {
+  try { globalThis.self = globalThis; } catch (e) {}
+}
 function loadFactory(id) {
   const f = require(path.join(MODULES_DIR, String(id) + '.js'));
   return (f && f.default) || f;

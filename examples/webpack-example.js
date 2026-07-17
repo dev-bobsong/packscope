@@ -1,0 +1,1 @@
+(()=>{var t={807(t){t.exports={add:function(t,o){return t+o}}},853(t,o,r){const{add:e}=r(807);function n(){return e(2,3)}console.log("result:",n()),t.exports={run:n}}};const o={};let r=function r(e){const n=o[e];if(void 0!==n)return n.exports;const s=o[e]={exports:{}};return t[e](s,s.exports,r),s.exports}(853);exports.WebpackExample=r})();

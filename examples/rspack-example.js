@@ -1,0 +1,1 @@
+(()=>{var r={807(r){r.exports={add:function(r,t){return r+t}}},853(r,t,e){let{add:o}=e(807);function n(){return o(2,3)}console.log("result:",n()),r.exports={run:n}}},t={},e=function e(o){var n=t[o];if(void 0!==n)return n.exports;var s=t[o]={exports:{}};return r[o](s,s.exports,e),s.exports}(853);exports.RspackExample=e})();
