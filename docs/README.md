@@ -1,7 +1,10 @@
 # Packscope GitHub Pages
 
-This folder powers the Packscope website at
-**https://open.awareride.com/packscope/**.
+This folder powers the Packscope sub-page at
+**https://open.awareride.com/pockscope**.
+
+The Awareride logo in the site header links back to
+**https://open.awareride.com**.
 
 ## Files
 

@@ -95,6 +95,31 @@ pre code {
   height: 68px;
 }
 
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.awareride-logo {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.awareride-logo:hover {
+  opacity: 1;
+  text-decoration: none;
+}
+
+.awareride-logo img {
+  max-width: 120px;
+  width: auto;
+  height: 26px;
+  object-fit: contain;
+}
+
 .logo {
   display: flex;
   align-items: center;
@@ -483,6 +508,19 @@ section {
   font-size: 0.9rem;
 }
 
+.footer-copy a {
+  color: var(--text-muted);
+}
+
+.footer-copy a:hover {
+  color: var(--accent);
+}
+
+.footer-sep {
+  margin: 0 6px;
+  color: var(--border);
+}
+
 /* Responsive */
 @media (max-width: 720px) {
   .nav-links {
@@ -509,5 +547,19 @@ section {
   .footer-content {
     flex-direction: column;
     text-align: center;
+  }
+
+  .nav-brand {
+    gap: 10px;
+  }
+
+  .awareride-logo img {
+    max-width: 90px;
+    height: 22px;
+  }
+
+  .logo img {
+    width: 130px;
+    height: auto;
   }
 }
