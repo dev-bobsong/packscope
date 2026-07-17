@@ -6,8 +6,14 @@
   "bin": {
     "packscope": "packscope.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/awareride/packscope.git"
+  },
+  "homepage": "https://github.com/awareride/packscope#readme",
   "files": [
     "packscope.js",
+    "icon.svg",
     "README.md"
   ],
   "scripts": {

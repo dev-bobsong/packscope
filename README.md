@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./icon.svg" alt="Packscope" width="120" height="120">
+</p>
+
 # Packscope — inspect, analyze, and debug JavaScript bundles
 
 A small Node CLI that unpacks a single ("mono") JavaScript bundle — from
