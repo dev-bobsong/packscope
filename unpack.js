@@ -2,16 +2,120 @@
 'use strict';
 
 /**
- * unpack.js — unpack a mono webpack/rspack bundle into human-readable,
- * individually-executable CommonJS modules plus a loader.
+ * unpack.js — unpack a mono webpack/rspack bundle or ES module bundle
+ * (Vite/rollup/Angular esbuild) into human-readable, individually-executable
+ * modules plus a loader.
  *
- * Usage: node unpack.js <bundle.js> <outDir> [--no-rename] [--entry N]
+ * Usage: node unpack.js <bundle.js|URL> <outDir> [options]
  */
 
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
+const https = require('https');
+const { URL, fileURLToPath, pathToFileURL } = require('url');
 const acorn = require('acorn');
 const escodegen = require('escodegen');
+const jsBeautify = require('js-beautify').js_beautify;
+
+// ---------------------------------------------------------------------------
+// URL helpers
+// ---------------------------------------------------------------------------
+function isUrl(str) {
+  return /^https?:\/\//i.test(str);
+}
+
+function detectBundleType(source) {
+  // webpack/rspack mono bundles are scripts with the module dictionary.
+  if (source.includes('var __webpack_modules__') || source.includes('__webpack_require__')) {
+    return 'webpack';
+  }
+  // Vite/rollup/Angular-esbuild outputs are ES modules with import/export.
+  if (/^\s*(import|export)\b/m.test(source)) {
+    return 'esm';
+  }
+  return 'webpack'; // fallback; will likely fail parse if truly ESM
+}
+
+function urlBasename(url) {
+  const p = new URL(url).pathname;
+  const base = path.basename(p) || 'bundle.js';
+  return base.split(/[?#]/)[0];
+}
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function getCacheDir() {
+  const dir = path.resolve('.unpack-cache');
+  ensureDir(dir);
+  return dir;
+}
+
+function fetchUrl(url, options = {}) {
+  const retries = options.retries ?? 3;
+  const delay = options.retryDelay ?? 500;
+  return new Promise((resolve, reject) => {
+    function attempt(remaining) {
+      const urlObj = new URL(url);
+      const client = urlObj.protocol === 'https:' ? https : http;
+      const req = client.get(url, { headers: options.headers }, (res) => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+          const loc = res.headers.location;
+          if (!loc) return reject(new Error(`Redirect with no Location for ${url}`));
+          return resolve(fetchUrl(new URL(loc, url).toString(), options));
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        }
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({
+          url,
+          statusCode: res.statusCode,
+          headers: res.headers,
+          data: Buffer.concat(chunks),
+        }));
+      });
+      req.on('error', (err) => {
+        if (remaining > 0) {
+          console.warn(`[unpack] retry ${url} (${remaining} left): ${err.message}`);
+          setTimeout(() => attempt(remaining - 1), delay);
+        } else {
+          reject(err);
+        }
+      });
+      req.setTimeout(options.timeout || 60000, () => {
+        req.destroy();
+        const err = new Error(`Timeout fetching ${url}`);
+        if (remaining > 0) {
+          console.warn(`[unpack] retry ${url} (${remaining} left): ${err.message}`);
+          setTimeout(() => attempt(remaining - 1), delay);
+        } else {
+          reject(err);
+        }
+      });
+    }
+    attempt(retries);
+  });
+}
+
+async function downloadUrl(url, destPath, options = {}) {
+  ensureDir(path.dirname(destPath));
+  let data;
+  let contentType;
+  if (url.startsWith('file:')) {
+    const filePath = fileURLToPath(url);
+    data = fs.readFileSync(filePath);
+  } else {
+    const res = await fetchUrl(url, options);
+    data = res.data;
+    contentType = res.headers['content-type'];
+  }
+  fs.writeFileSync(destPath, data);
+  return { url, path: destPath, size: data.length, contentType };
+}
 
 // ---------------------------------------------------------------------------
 // Options / CLI
@@ -19,7 +123,15 @@ const escodegen = require('escodegen');
 const POS_NAMES = ['module', 'exports', 'require'];
 
 function parseArgs(argv) {
-  const args = { bundle: null, out: null, rename: false, beautify: false, entry: null, help: false };
+  const args = {
+    bundle: null,
+    out: null,
+    rename: false,
+    beautify: false,
+    entry: null,
+    help: false,
+    fetchAssets: null, // null = auto (true for URLs, false for local files)
+  };
   const positionals = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -27,6 +139,9 @@ function parseArgs(argv) {
     else if (a === '--rename') args.rename = true;
     else if (a === '--no-beautify') args.beautify = false;
     else if (a === '--beautify') args.beautify = true;
+    else if (a === '--decompose') args.decompose = true;
+    else if (a === '--fetch-assets') args.fetchAssets = true;
+    else if (a === '--no-fetch-assets') args.fetchAssets = false;
     else if (a === '--entry') args.entry = argv[++i];
     else if (a === '-h' || a === '--help') args.help = true;
     else positionals.push(a);
@@ -37,19 +152,31 @@ function parseArgs(argv) {
 }
 
 const HELP = `
-unpack.js — unpack a mono webpack/rspack bundle into readable, executable modules.
+unpack.js — unpack a mono webpack/rspack or ES module bundle into readable,
+executable modules.
 
 Usage:
-  node unpack.js <bundle.js> <outDir> [options]
+  node unpack.js <bundle.js|URL> <outDir> [options]
+
+The bundle argument may be a local file path or an http(s) URL. URLs are downloaded
+into a local cache before unpacking.
+
+Bundle type is auto-detected: webpack/rspack script bundles are reconstructed with
+per-module delegators; ES module bundles (Vite / rollup / Angular esbuild) have their
+imported chunks resolved and downloaded recursively.
 
 Options:
-  --no-rename    keep obfuscated wrapper params (eA, el, ec) [DEFAULT]
-  --rename       rename wrapper params to module/exports/require (opt-in, scope-aware)
-  --beautify     regenerate pretty (indented) module bodies via escodegen
-                [best-effort; default OFF keeps the original source slices, which are
-                 guaranteed to run identically to the bundle]
-  --entry <N>    force entry module id (auto-detected otherwise)
-  -h, --help     show this help
+  --no-rename        keep obfuscated wrapper params (eA, el, ec) [DEFAULT]
+  --rename           rename wrapper params to module/exports/require (opt-in, scope-aware)
+  --beautify         regenerate pretty (indented) module bodies via escodegen
+                    [best-effort; default OFF keeps the original source slices, which are
+                     guaranteed to run identically to the bundle]
+  --decompose        for ES module bundles, also extract top-level classes / modules
+                    into a read-only decomposed/ view (best-effort)
+  --fetch-assets     auto-download referenced source maps / asset URLs
+  --no-fetch-assets  don't auto-download referenced assets
+  --entry <N>        force entry module id (auto-detected otherwise)
+  -h, --help         show this help
 `;
 
 // ---------------------------------------------------------------------------
@@ -293,7 +420,7 @@ function detectExternals(source) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || !args.bundle) {
     process.stdout.write(HELP);
@@ -301,16 +428,47 @@ function main() {
     return;
   }
 
-  const bundlePath = path.resolve(args.bundle);
   const outDir = path.resolve(args.out || 'out');
-  if (!fs.existsSync(bundlePath)) {
-    console.error(`[unpack] bundle not found: ${bundlePath}`);
-    process.exit(1);
+
+  let bundlePath;
+  let bundleUrl = null;
+  let fetchAssets = args.fetchAssets;
+
+  if (isUrl(args.bundle)) {
+    bundleUrl = args.bundle;
+    if (fetchAssets === null) fetchAssets = true;
+    const cacheDir = getCacheDir();
+    const cachedName = urlBasename(bundleUrl);
+    bundlePath = path.join(cacheDir, cachedName);
+    console.log(`[unpack] downloading ${bundleUrl} ...`);
+    try {
+      const info = await downloadUrl(bundleUrl, bundlePath);
+      console.log(`[unpack] downloaded ${info.size} bytes -> ${bundlePath}`);
+    } catch (e) {
+      console.error(`[unpack] failed to download ${bundleUrl}: ${e.message}`);
+      process.exit(1);
+    }
+  } else {
+    bundlePath = path.resolve(args.bundle);
+    if (fetchAssets === null) fetchAssets = false;
+    if (!fs.existsSync(bundlePath)) {
+      console.error(`[unpack] bundle not found: ${bundlePath}`);
+      process.exit(1);
+    }
   }
 
   console.log(`[unpack] reading ${bundlePath} ...`);
   const source = fs.readFileSync(bundlePath, 'utf8');
   console.log(`[unpack] bundle size: ${source.length} bytes`);
+
+  const bundleType = detectBundleType(source);
+  console.log(`[unpack] detected bundle type: ${bundleType}`);
+  if (bundleType === 'esm') {
+    fs.mkdirSync(outDir, { recursive: true });
+    const baseRef = bundleUrl || pathToFileURL(bundlePath).href;
+    await unpackEsModule(source, baseRef, outDir, args);
+    return;
+  }
 
   console.log('[unpack] parsing with acorn ...');
   const t0 = Date.now();
@@ -429,6 +587,13 @@ function main() {
   }
 
   manifest.moduleCount = count;
+  manifest.assets = [];
+
+  // Discover and optionally download referenced assets (source maps, JS/CSS URLs).
+  if (fetchAssets) {
+    await discoverAndFetchAssets(source, bundleUrl || bundlePath, outDir, manifest);
+  }
+
   fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
   // loader + entry + package.json + rebuild
@@ -455,6 +620,646 @@ function inferName(bodySrc) {
     if (m) return m[1] || m[2] || null;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// ES module bundle support (Vite / rollup / Angular esbuild)
+// ---------------------------------------------------------------------------
+
+function beautifyJs(source) {
+  try {
+    return jsBeautify(source, BEAUTIFY_OPTS);
+  } catch (e) {
+    console.warn(`[unpack] beautify failed: ${e.message}`);
+    return source;
+  }
+}
+
+function extractInlineSourceMap(source) {
+  const m = source.match(/\/\/#\s*sourceMappingURL\s*=\s*(data:application\/json[^,]+,(.+))\s*$/m);
+  if (!m) return null;
+  try {
+    const data = m[1];
+    const comma = data.indexOf(',');
+    if (comma === -1) return null;
+    const b64 = data.slice(comma + 1);
+    const json = Buffer.from(b64, 'base64').toString('utf8');
+    return JSON.parse(json);
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeSourcePath(p) {
+  // Turn a source path like "../../node_modules/.../foo.ts" into a safe relative path.
+  return p.replace(/\.{2,}[\/\\]/g, '_/').replace(/[?#].*$/, '').replace(/[^a-zA-Z0-9._\-/\\]/g, '_');
+}
+
+function splitFromSourceMap(source, map, outDir, chunkFile) {
+  if (!map || !map.sources) return [];
+  const sourcesDir = path.join(outDir, 'sources');
+  ensureDir(sourcesDir);
+  const written = [];
+  for (let i = 0; i < map.sources.length; i++) {
+    const srcPath = map.sources[i];
+    const content = (map.sourcesContent && map.sourcesContent[i]) || '';
+    if (!content) continue;
+    const safe = safeSourcePath(srcPath);
+    const localFile = uniqueFilename(sourcesDir, safe);
+    ensureDir(path.dirname(localFile));
+    fs.writeFileSync(localFile, content);
+    written.push({ original: srcPath, file: path.relative(outDir, localFile) });
+  }
+  return written;
+}
+
+// ---------------------------------------------------------------------------
+// Best-effort ES module decomposer (read-only view)
+// ---------------------------------------------------------------------------
+
+function isMinifiedId(name) {
+  return name && name.length <= 2 && /^[a-z_$][a-z0-9_$]*$/i.test(name);
+}
+
+function inferUnitName(stmt, src) {
+  // Direct class/function id
+  if (stmt.type === 'ClassDeclaration' && stmt.id) return stmt.id.name;
+  if (stmt.type === 'FunctionDeclaration' && stmt.id) return stmt.id.name;
+  if (stmt.type === 'VariableDeclaration') {
+    for (const d of stmt.declarations) {
+      if (d.id && d.id.type === 'Identifier') {
+        const varName = d.id.name;
+        let expr = d.init;
+        if (expr && (expr.type === 'AssignmentPattern')) expr = expr.left;
+        if (expr && (expr.type === 'ClassExpression' || expr.type === 'FunctionExpression' || expr.type === 'ArrowFunctionExpression')) {
+          const exprId = expr.id && expr.id.name;
+          if (exprId && !isMinifiedId(exprId)) return exprId;
+          if (varName && !isMinifiedId(varName)) return varName;
+          // Try to infer from the first this.<prop> assignment in the body.
+          const bodySrc = src.slice(expr.start, expr.end);
+          const m = bodySrc.match(/this\.(\w+)\s*=/);
+          if (m) return m[1];
+          return varName || exprId || 'unit';
+        }
+      }
+    }
+  }
+  return 'unit';
+}
+
+function isDecomposableUnit(stmt) {
+  if (stmt.type === 'ClassDeclaration') return true;
+  if (stmt.type === 'FunctionDeclaration') {
+    // Skip tiny Angular Ivy render helpers.
+    const body = stmt.body;
+    const bodyLen = body ? body.end - body.start : 0;
+    return bodyLen > 200;
+  }
+  if (stmt.type === 'VariableDeclaration') {
+    for (const d of stmt.declarations) {
+      let expr = d.init;
+      if (expr && expr.type === 'AssignmentPattern') expr = expr.left;
+      if (!expr) continue;
+      // Class/function expression
+      if (expr.type === 'ClassExpression' || expr.type === 'FunctionExpression') return true;
+      // CommonJS-style wrapper: var x = helper((module, exports) => {...})
+      if (expr.type === 'CallExpression' &&
+          expr.arguments.length === 1 &&
+          (expr.arguments[0].type === 'FunctionExpression' || expr.arguments[0].type === 'ArrowFunctionExpression') &&
+          expr.arguments[0].params.length === 2) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function safeDecomposeName(name) {
+  return (name || 'unit').replace(/[^a-zA-Z0-9_.$-]/g, '_').replace(/_{2,}/g, '_').slice(0, 80) || 'unit';
+}
+
+function decomposeChunk(source, chunkFile, outDir) {
+  let ast;
+  try {
+    ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+  } catch (e) {
+    return [];
+  }
+  const baseName = path.basename(chunkFile, path.extname(chunkFile));
+  const decompDir = path.join(outDir, 'decomposed', baseName);
+  ensureDir(decompDir);
+
+  const units = [];
+  const residualRanges = [];
+  let lastEnd = 0;
+
+  for (let i = 0; i < ast.body.length; i++) {
+    const stmt = ast.body[i];
+    if (isDecomposableUnit(stmt)) {
+      const name = inferUnitName(stmt, source);
+      const safe = safeDecomposeName(name);
+      const wanted = `${units.length.toString().padStart(4, '0')}-${safe}.js`;
+      const outFile = uniqueFilename(decompDir, wanted);
+      const text =
+        `// Decomposed read-only extract from ${path.basename(chunkFile)}\n` +
+        `// inferred name: ${name}\n` +
+        `// This file is NOT executable on its own; use it for navigation/reading only.\n\n` +
+        source.slice(stmt.start, stmt.end) + '\n';
+      fs.writeFileSync(outFile, text);
+      units.push({ name, file: path.relative(outDir, outFile), size: text.length });
+      residualRanges.push({ start: lastEnd, end: stmt.start });
+      lastEnd = stmt.end;
+    }
+  }
+  residualRanges.push({ start: lastEnd, end: source.length });
+
+  let residual = '';
+  for (const r of residualRanges) residual += source.slice(r.start, r.end);
+  if (residual.trim().length > 50) {
+    const residualFile = path.join(decompDir, '_residual.js');
+    fs.writeFileSync(residualFile, residual);
+    units.push({ name: '_residual', file: path.relative(outDir, residualFile), size: residual.length });
+  }
+
+  return units;
+}
+
+async function unpackEsModule(source, bundleUrl, outDir, args) {
+  const entryBaseName = urlBasename(bundleUrl);
+  const entryPath = path.join(outDir, entryBaseName);
+  const chunksDir = path.join(outDir, 'chunks');
+  const assetsDir = path.join(outDir, 'assets');
+  ensureDir(chunksDir);
+  ensureDir(assetsDir);
+
+  const manifest = {
+    bundleType: 'esm',
+    source: entryBaseName,
+    entry: entryBaseName,
+    baseUrl: bundleUrl,
+    chunks: [],
+    assets: [],
+    decomposed: [],
+  };
+
+  const urlToChunkFile = new Map();
+  const seenUrls = new Set();
+  const processedFiles = []; // { path, source, baseUrl }
+
+  async function processSourceMap(content, baseUrl, chunkFile) {
+    let map = extractInlineSourceMap(content);
+    let mapUrl = null;
+    if (!map) {
+      const m = content.match(/\/\/#\s*sourceMappingURL\s*=\s*(.+?)\s*$/m);
+      if (m) {
+        const raw = m[1].trim();
+        if (!raw.startsWith('data:')) {
+          mapUrl = normalizeUrl(raw, baseUrl);
+          if (mapUrl && isFetchableUrl(mapUrl)) {
+            try {
+              const smPath = path.join(outDir, 'assets', safeFilename(mapUrl));
+              await downloadUrl(mapUrl, smPath);
+              map = JSON.parse(fs.readFileSync(smPath, 'utf8'));
+            } catch (e) {
+              console.warn(`[unpack]   ! failed to fetch source map ${mapUrl}: ${e.message}`);
+            }
+          }
+        }
+      }
+    }
+    if (!map) return [];
+    const extracted = splitFromSourceMap(content, map, outDir, chunkFile);
+    if (extracted.length) {
+      console.log(`[unpack]   ~ extracted ${extracted.length} source file(s) from ${path.basename(chunkFile)}`);
+    }
+    return extracted.map((s) => ({ ...s, mapUrl }));
+  }
+
+  async function processJsModule(url, importerUrl, depth) {
+    if (!isFetchableUrl(url)) return;
+    if (seenUrls.has(url)) return;
+    if (depth > 10) {
+      console.warn(`[unpack] max recursion depth reached, skipping ${url}`);
+      return;
+    }
+    seenUrls.add(url);
+    const localFile = allocateFile(url, chunksDir, urlToChunkFile);
+    try {
+      const info = await downloadUrl(url, localFile);
+      console.log(`[unpack]   + chunk ${path.basename(localFile)} (${info.size} bytes) <- ${url}`);
+      let content = fs.readFileSync(localFile, 'utf8');
+      const imports = collectModuleImports(content, url);
+      const childUrls = imports.map((i) => i.resolved).filter(Boolean);
+      await withConcurrency(
+        childUrls.map((cu) => () => processJsModule(cu, url, depth + 1)),
+        5
+      );
+      content = rewriteImports(content, url, localFile, urlToChunkFile);
+      const sources = await processSourceMap(content, url, localFile);
+      if (args.beautify) content = beautifyJs(content);
+      fs.writeFileSync(localFile, content);
+      if (args.decompose) {
+        const units = decomposeChunk(content, localFile, outDir);
+        if (units.length) {
+          manifest.decomposed.push({ chunk: path.relative(outDir, localFile), units });
+          console.log(`[unpack]   ~ decomposed ${path.basename(localFile)} into ${units.length} unit(s)`);
+        }
+      }
+      processedFiles.push({ path: localFile, source: content, baseUrl: url });
+      manifest.chunks.push({
+        url,
+        file: path.relative(outDir, localFile),
+        size: info.size,
+        importer: importerUrl,
+        imports: childUrls,
+        sources,
+      });
+    } catch (e) {
+      console.warn(`[unpack] failed to fetch chunk ${url}: ${e.message}`);
+      manifest.chunks.push({ url, file: null, error: e.message, importer: importerUrl });
+    }
+  }
+
+  const entryImports = collectModuleImports(source, bundleUrl);
+  await withConcurrency(
+    entryImports
+      .filter((imp) => isFetchableUrl(imp.resolved))
+      .map((imp) => () => processJsModule(imp.resolved, bundleUrl, 0)),
+    5
+  );
+  let rewrittenEntry = rewriteImports(source, bundleUrl, entryPath, urlToChunkFile);
+  const entrySources = await processSourceMap(rewrittenEntry, bundleUrl, entryPath);
+  if (args.beautify) rewrittenEntry = beautifyJs(rewrittenEntry);
+  fs.writeFileSync(entryPath, rewrittenEntry);
+  if (args.decompose) {
+    const units = decomposeChunk(rewrittenEntry, entryPath, outDir);
+    if (units.length) {
+      manifest.decomposed.push({ chunk: path.relative(outDir, entryPath), units });
+      console.log(`[unpack]   ~ decomposed ${path.basename(entryPath)} into ${units.length} unit(s)`);
+    }
+  }
+  processedFiles.unshift({ path: entryPath, source: rewrittenEntry, baseUrl: bundleUrl });
+
+  if (args.fetchAssets) {
+    await discoverEsModuleAssets(processedFiles, outDir, manifest);
+  }
+
+  manifest.entrySources = entrySources;
+  fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  writeEsModulePackageJson(outDir, entryBaseName);
+  writeEsModuleIndexHtml(outDir, entryBaseName);
+
+  console.log(`[unpack] done. ESM bundle unpacked to ${outDir}`);
+  console.log(`[unpack] entry: ${entryBaseName}`);
+}
+
+function discoverEsModuleAssets(processedFiles, outDir, manifest) {
+  const assetsDir = path.join(outDir, 'assets');
+  ensureDir(assetsDir);
+  const urlToAssetFile = new Map();
+  const seen = new Set();
+
+  return (async function () {
+    for (const { path: filePath, source, baseUrl } of processedFiles) {
+      const items = scanFileAssets(source, baseUrl);
+      let rewrites = [];
+      for (const item of items) {
+        if (!item.url || seen.has(item.url)) continue;
+        seen.add(item.url);
+        if (!isFetchableUrl(item.url)) continue;
+        const localFile = allocateFile(item.url, assetsDir, urlToAssetFile);
+        try {
+          const info = await downloadUrl(item.url, localFile);
+          console.log(`[unpack]   + asset ${path.basename(localFile)} (${info.size} bytes) <- ${item.url}`);
+          manifest.assets.push({
+            type: item.type,
+            url: item.url,
+            raw: item.raw,
+            file: path.relative(outDir, localFile),
+            size: info.size,
+          });
+          if (item.start != null && item.end != null) {
+            let rel = path.relative(path.dirname(filePath), localFile).replace(/\\/g, '/');
+            if (!rel.startsWith('.')) rel = './' + rel;
+            rewrites.push({ start: item.start, end: item.end, text: JSON.stringify(rel) });
+          }
+        } catch (e) {
+          console.warn(`[unpack]   ! failed to fetch asset ${item.url}: ${e.message}`);
+          manifest.assets.push({
+            type: item.type,
+            url: item.url,
+            raw: item.raw,
+            file: null,
+            size: 0,
+            error: e.message,
+          });
+        }
+      }
+      if (rewrites.length) {
+        const rewritten = applyReplacements(fs.readFileSync(filePath, 'utf8'), rewrites);
+        fs.writeFileSync(filePath, rewritten);
+      }
+    }
+  })();
+}
+
+function scanFileAssets(source, baseUrl) {
+  const items = [];
+  // source map reference
+  const smRe = /\/\/#\s*sourceMappingURL\s*=\s*(.+?)\s*$/gm;
+  let m;
+  while ((m = smRe.exec(source))) {
+    const raw = m[1].trim();
+    const url = baseUrl ? normalizeUrl(raw, baseUrl) : null;
+    if (url) items.push({ type: 'source-map', url, raw });
+  }
+  // new URL('...', import.meta.url) asset references
+  try {
+    const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+    function walk(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { for (const c of node) walk(c); return; }
+      if (!node.type) return;
+      if (
+        node.type === 'NewExpression' &&
+        node.callee.type === 'Identifier' &&
+        node.callee.name === 'URL' &&
+        node.arguments[0] &&
+        node.arguments[0].type === 'Literal' &&
+        typeof node.arguments[0].value === 'string' &&
+        node.arguments[1] &&
+        node.arguments[1].type === 'MemberExpression' &&
+        node.arguments[1].object.type === 'MetaProperty' &&
+        node.arguments[1].object.meta.name === 'import' &&
+        node.arguments[1].object.property.name === 'meta' &&
+        node.arguments[1].property.type === 'Identifier' &&
+        node.arguments[1].property.name === 'url'
+      ) {
+        const raw = node.arguments[0].value;
+        const url = baseUrl ? normalizeUrl(raw, baseUrl) : null;
+        if (url) {
+          items.push({
+            type: 'asset-url',
+            url,
+            raw,
+            start: node.arguments[0].start,
+            end: node.arguments[0].end,
+          });
+        }
+      }
+      for (const k of Object.keys(node)) {
+        if (k === 'type' || k === 'start' || k === 'end' || k === 'loc' || k === 'range') continue;
+        walk(node[k]);
+      }
+    }
+    walk(ast);
+  } catch (e) {
+    // ignore parse errors during asset scanning
+  }
+  // bare absolute URL strings that look like static assets
+  const urlRe = /https?:\/\/[^\s"'<>(){}[\]`]+/g;
+  while ((m = urlRe.exec(source))) {
+    const url = m[0].replace(/[.,;!?]+$/, '');
+    if (isAssetUrl(url)) items.push({ type: 'asset-url', url, raw: url });
+  }
+  return items;
+}
+
+function writeEsModulePackageJson(outDir, entryBaseName) {
+  const name = path.basename(entryBaseName, path.extname(entryBaseName)) + '-unpacked';
+  const pkg = {
+    name,
+    version: '0.0.0',
+    private: true,
+    type: 'module',
+    main: entryBaseName,
+  };
+  fs.writeFileSync(path.join(outDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
+}
+
+function writeEsModuleIndexHtml(outDir, entryBaseName) {
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Unpacked ESM bundle</title>
+</head>
+<body>
+  <script type="module" src="./${entryBaseName.replace(/"/g, '&quot;')}"></script>
+</body>
+</html>
+`;
+  fs.writeFileSync(path.join(outDir, 'index.html'), html);
+}
+
+// ---------------------------------------------------------------------------
+// Asset discovery / download
+// ---------------------------------------------------------------------------
+const ASSET_EXTS = new Set([
+  'js', 'mjs', 'cjs', 'css', 'json', 'map',
+  'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico',
+  'woff', 'woff2', 'ttf', 'eot', 'otf',
+]);
+
+function isAssetUrl(u) {
+  try {
+    const urlObj = new URL(u);
+    const ext = path.extname(urlObj.pathname).replace(/^\./, '').toLowerCase();
+    return ASSET_EXTS.has(ext);
+  } catch (e) {
+    return false;
+  }
+}
+
+function normalizeUrl(u, base) {
+  try {
+    return new URL(u, base).toString();
+  } catch (e) {
+    return null;
+  }
+}
+
+function isFetchableUrl(url) {
+  return url && (/^https?:/.test(url) || url.startsWith('file:'));
+}
+
+async function withConcurrency(tasks, limit) {
+  const results = [];
+  const executing = [];
+  for (const task of tasks) {
+    const p = Promise.resolve(task());
+    results.push(p);
+    executing.push(p);
+    p.then(() => {
+      const i = executing.indexOf(p);
+      if (i !== -1) executing.splice(i, 1);
+    });
+    if (executing.length >= limit) await Promise.race(executing);
+  }
+  return Promise.all(results);
+}
+
+function safeFilename(u) {
+  try {
+    const urlObj = new URL(u);
+    let name = path.basename(urlObj.pathname) || 'asset';
+    name = name.split(/[?#]/)[0];
+    // Sanitize for filesystem
+    name = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!name) name = 'asset';
+    return name;
+  } catch (e) {
+    return 'asset';
+  }
+}
+
+function uniqueFilename(dir, wanted) {
+  let p = path.join(dir, wanted);
+  if (!fs.existsSync(p)) return p;
+  const ext = path.extname(wanted);
+  const base = wanted.slice(0, -ext.length) || wanted;
+  let i = 1;
+  while (true) {
+    p = path.join(dir, `${base}_${i}${ext}`);
+    if (!fs.existsSync(p)) return p;
+    i++;
+  }
+}
+
+function allocateFile(url, dir, urlToFile) {
+  if (urlToFile.has(url)) return urlToFile.get(url);
+  const name = safeFilename(url);
+  const abs = uniqueFilename(dir, name);
+  urlToFile.set(url, abs);
+  return abs;
+}
+
+function collectModuleImports(source, baseUrl) {
+  let ast;
+  try {
+    ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+  } catch (e) {
+    return [];
+  }
+  const out = [];
+  function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { for (const c of node) walk(c); return; }
+    if (!node.type) return;
+    if (
+      node.type === 'ImportDeclaration' ||
+      node.type === 'ExportNamedDeclaration' ||
+      node.type === 'ExportAllDeclaration'
+    ) {
+      if (node.source && node.source.type === 'Literal' && typeof node.source.value === 'string') {
+        const raw = node.source.value;
+        const resolved = normalizeUrl(raw, baseUrl);
+        out.push({ type: 'static', raw, resolved, start: node.source.start, end: node.source.end });
+      }
+    } else if (node.type === 'ImportExpression' && node.source && node.source.type === 'Literal' && typeof node.source.value === 'string') {
+      const raw = node.source.value;
+      const resolved = normalizeUrl(raw, baseUrl);
+      out.push({ type: 'dynamic', raw, resolved, start: node.source.start, end: node.source.end });
+    }
+    for (const k of Object.keys(node)) {
+      if (k === 'type' || k === 'start' || k === 'end' || k === 'loc' || k === 'range') continue;
+      walk(node[k]);
+    }
+  }
+  walk(ast);
+  return out;
+}
+
+function applyReplacements(source, replacements) {
+  replacements.sort((a, b) => a.start - b.start);
+  let out = '';
+  let last = 0;
+  for (const r of replacements) {
+    if (r.start < last) continue; // overlap guard
+    out += source.slice(last, r.start);
+    out += r.text;
+    last = r.end;
+  }
+  out += source.slice(last);
+  return out;
+}
+
+function rewriteImports(source, baseUrl, importerPath, urlToFile) {
+  const imports = collectModuleImports(source, baseUrl);
+  const reps = [];
+  for (const imp of imports) {
+    if (!imp.resolved || !urlToFile.has(imp.resolved)) continue;
+    const target = urlToFile.get(imp.resolved);
+    let rel = path.relative(path.dirname(importerPath), target).replace(/\\/g, '/');
+    if (!rel.startsWith('.')) rel = './' + rel;
+    reps.push({ start: imp.start, end: imp.end, text: JSON.stringify(rel) });
+  }
+  return applyReplacements(source, reps);
+}
+
+async function discoverAndFetchAssets(source, bundleRef, outDir, manifest) {
+  const baseUrl = isUrl(bundleRef) ? bundleRef : null;
+  const assetsDir = path.join(outDir, 'assets');
+  ensureDir(assetsDir);
+
+  const seen = new Set();
+  const toFetch = [];
+
+  // 1. Source map reference
+  const smRe = /\/\/#\s*sourceMappingURL\s*=\s*(.+?)\s*$/gm;
+  let m;
+  while ((m = smRe.exec(source))) {
+    const raw = m[1].trim();
+    const url = baseUrl ? normalizeUrl(raw, baseUrl) : (path.isAbsolute(raw) ? `file://${raw}` : normalizeUrl(raw, `file://${path.resolve(path.dirname(bundleRef))}/`));
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      toFetch.push({ type: 'source-map', url, raw });
+    }
+  }
+
+  // 2. URL strings that look like static assets (JS/CSS/images/fonts/maps).
+  //    Match both quoted URLs and bare http(s) substrings.
+  const urlRe = /https?:\/\/[^\s"'<>(){}[\]`]+/g;
+  while ((m = urlRe.exec(source))) {
+    const url = m[0].replace(/[.,;!?]+$/, '');
+    if (isAssetUrl(url) && !seen.has(url)) {
+      seen.add(url);
+      toFetch.push({ type: 'asset-url', url, raw: url });
+    }
+  }
+
+  if (!toFetch.length) return;
+
+  console.log(`[unpack] discovering ${toFetch.length} referenced asset(s) ...`);
+  for (const item of toFetch) {
+    if (!isFetchableUrl(item.url)) {
+      console.log(`[unpack] asset ${item.raw} is not a fetchable URL, skipping`);
+      continue;
+    }
+    const wanted = safeFilename(item.url);
+    const destPath = uniqueFilename(assetsDir, wanted);
+    try {
+      const info = await downloadUrl(item.url, destPath);
+      console.log(`[unpack]   + asset ${path.basename(destPath)} (${info.size} bytes) <- ${item.url}`);
+      manifest.assets.push({
+        type: item.type,
+        url: item.url,
+        raw: item.raw,
+        file: path.relative(outDir, destPath),
+        size: info.size,
+      });
+    } catch (e) {
+      console.warn(`[unpack]   ! failed to fetch asset ${item.url}: ${e.message}`);
+      manifest.assets.push({
+        type: item.type,
+        url: item.url,
+        raw: item.raw,
+        file: null,
+        size: 0,
+        error: e.message,
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -578,4 +1383,7 @@ function linkNodeModules(outDir, bundlePath) {
   }
 }
 
-main();
+main().catch((e) => {
+  console.error('[unpack] error:', e);
+  process.exit(1);
+});

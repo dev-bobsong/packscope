@@ -1,4 +1,6 @@
 node_modules/
 out/
+out-*/
+.unpack-cache/
 *.log
 .DS_Store
