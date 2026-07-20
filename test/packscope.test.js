@@ -172,3 +172,75 @@ describe('optional flags', () => {
     assert.match(runRes.stdout, /result:\s*5/);
   });
 });
+
+describe('mirror paths (--devtools)', () => {
+  const { mirrorSubdir, allocateFile } = require('../packscope.js');
+
+  it('mirrorSubdir / allocateFile include the host (DevTools Overrides layout)', () => {
+    assert.equal(mirrorSubdir('https://example.com/assets/index-CLHtNMqj.js'), 'example.com/assets');
+    assert.equal(mirrorSubdir('https://x.com/bundle.js'), 'x.com');
+    assert.equal(mirrorSubdir('https://x.com/a/b/c.js'), 'x.com/a/b');
+
+    const os = require('os');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'packscope-mirror-'));
+    const chunksDir = path.join(tmp, 'chunks');
+    const map = new Map();
+    const entry = allocateFile('https://example.com/assets/index-CLHtNMqj.js', chunksDir, map, tmp);
+    assert.equal(entry, path.join(tmp, 'example.com', 'assets', 'index-CLHtNMqj.js'));
+    const chunk = allocateFile('https://example.com/assets/chunks/x.js', chunksDir, map, tmp);
+    assert.equal(chunk, path.join(tmp, 'example.com', 'assets', 'chunks', 'x.js'));
+    // non-mirror falls back to flat chunksDir + safe filename
+    const map2 = new Map();
+    const flat = allocateFile('https://example.com/assets/chunks/x.js', chunksDir, map2);
+    assert.ok(flat.startsWith(chunksDir + path.sep), 'non-mirror should live under chunksDir');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('unpacks an ESM URL with --devtools mirroring the original path', async () => {
+    const http = require('http');
+    const server = http.createServer((req, res) => {
+      const p = req.url.split('?')[0];
+      const filePath = path.join(EXAMPLES, path.basename(p));
+      fs.readFile(filePath, (err, data) => {
+        if (err) { res.writeHead(404); res.end('nf'); return; }
+        res.writeHead(200, { 'Content-Type': 'text/javascript' });
+        res.end(data);
+      });
+    });
+    await new Promise((resolve) => server.listen(0, resolve));
+    try {
+      const host = `127.0.0.1:${server.address().port}`;
+      const url = `http://${host}/assets/rollup-example.mjs`;
+      const outName = 'esm-mirror';
+      const outDir = outFile(outName);
+      fs.rmSync(outDir, { recursive: true, force: true });
+      const res = await run('node', [PACKSCOPE, '--devtools', url, outDir]);
+      await assertSuccess(res, 'esm --devtools unpack failed');
+
+      const mirroredEntry = outFile(outName, host, 'assets', 'rollup-example.mjs');
+      assert.ok(fs.existsSync(mirroredEntry), `mirrored entry missing at out/${host}/assets/rollup-example.mjs`);
+      assert.ok(!fs.existsSync(outFile(outName, 'rollup-example.mjs')), 'flat entry should NOT exist when mirroring');
+
+      const manifest = JSON.parse(fs.readFileSync(outFile(outName, 'manifest.json'), 'utf8'));
+      assert.equal(manifest.entry, `${host}/assets/rollup-example.mjs`);
+      assert.equal(manifest.mirrored, true);
+      assert.equal(manifest.urlBaseDir, `${host}/assets`);
+
+      const runRes = await node(mirroredEntry);
+      await assertSuccess(runRes, 'mirrored esm entry run failed');
+      assert.match(runRes.stdout, /result:\s*5/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('unpacks a local ESM file with --devtools but keeps flat layout', async () => {
+    const res = await pack('rollup-example.mjs', 'esm-local-devtools', ['--devtools']);
+    await assertSuccess(res, 'local esm --devtools unpack failed');
+    // local file has no http(s) URL origin -> no mirroring
+    assert.ok(fs.existsSync(outFile('esm-local-devtools', 'rollup-example.mjs')));
+    const manifest = JSON.parse(fs.readFileSync(outFile('esm-local-devtools', 'manifest.json'), 'utf8'));
+    assert.equal(manifest.mirrored, false);
+  });
+});
+

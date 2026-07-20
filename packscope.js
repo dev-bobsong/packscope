@@ -30,10 +30,34 @@ function detectBundleType(source) {
   if (source.includes('var __webpack_modules__') || source.includes('__webpack_require__')) {
     return 'webpack';
   }
-  // Vite/rollup/Angular-esbuild outputs are ES modules with import/export.
-  if (/^\s*(import|export)\b/m.test(source)) {
-    return 'esm';
-  }
+  // Vite/rollup/esbuild/Angular outputs are ES modules. Parse as a module and
+  // look for real import/export syntax (static OR dynamic import()), which is
+  // the reliable signal (minified entries often place it mid-line, not at the
+  // start of a line).
+  try {
+    const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+    let hasModuleSyntax = false;
+    (function walk(n) {
+      if (!n || typeof n !== 'object') return;
+      if (Array.isArray(n)) { for (const c of n) walk(c); return; }
+      if (
+        n.type === 'ImportDeclaration' ||
+        n.type === 'ExportNamedDeclaration' ||
+        n.type === 'ExportAllDeclaration' ||
+        n.type === 'ExportDefaultDeclaration' ||
+        n.type === 'ImportExpression'
+      ) {
+        hasModuleSyntax = true;
+        return;
+      }
+      for (const k of Object.keys(n)) {
+        if (k === 'type' || k === 'start' || k === 'end' || k === 'loc' || k === 'range') continue;
+        const c = n[k];
+        if (c && typeof c === 'object') walk(c);
+      }
+    })(ast);
+    if (hasModuleSyntax) return 'esm';
+  } catch {}
   return 'script'; // generic script bundle (UMD/IIFE/scope-hoisted)
 }
 
@@ -41,6 +65,19 @@ function urlBasename(url) {
   const p = new URL(url).pathname;
   const base = path.basename(p) || 'bundle.js';
   return base.split(/[?#]/)[0];
+}
+
+// URL path (host + directory, origin/scheme stripped) used to mirror the
+// original site's layout into <outDir>. Chrome DevTools Local Overrides stores
+// overrides at <folder>/<host>/<path>, so we include the host. e.g.
+// 'https://example.com/assets/index.js' -> 'example.com/assets'.
+function mirrorSubdir(url) {
+  try {
+    const u = new URL(url);
+    return path.join(u.host, path.dirname(u.pathname).replace(/^\/+/, ''));
+  } catch {
+    return '';
+  }
 }
 
 function ensureDir(dir) {
@@ -131,6 +168,7 @@ function parseArgs(argv) {
     entry: null,
     help: false,
     fetchAssets: null, // null = auto (true for URLs, false for local files)
+    devtools: false,
   };
   const positionals = [];
   for (let i = 0; i < argv.length; i++) {
@@ -143,6 +181,7 @@ function parseArgs(argv) {
     else if (a === '--fetch-assets') args.fetchAssets = true;
     else if (a === '--no-fetch-assets') args.fetchAssets = false;
     else if (a === '--entry') args.entry = argv[++i];
+    else if (a === '--devtools' || a === '--mirror-paths') args.devtools = true;
     else if (a === '-h' || a === '--help') args.help = true;
     else positionals.push(a);
   }
@@ -176,6 +215,8 @@ Options:
   --fetch-assets     auto-download referenced source maps / asset URLs
   --no-fetch-assets  don't auto-download referenced assets
   --entry <N>        force entry module id (auto-detected otherwise)
+  --devtools         mirror original URL paths into <outDir> (e.g. out/assets/...)
+                    so DevTools Local Overrides / proxies map 1:1 with no symlinks
   -h, --help         show this help
 `;
 
@@ -725,6 +766,14 @@ async function main() {
     await discoverAndFetchAssets(source, bundleUrl || bundlePath, outDir, manifest);
   }
 
+  const mirrorSub = (args.devtools && bundleUrl && isUrl(bundleUrl)) ? mirrorSubdir(bundleUrl) : '';
+  const mirrorDir = mirrorSub ? path.join(outDir, mirrorSub) : null;
+  if (mirrorDir) {
+    manifest.mirrored = true;
+    manifest.urlBaseDir = mirrorSub;
+    ensureDir(mirrorDir);
+  }
+
   fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
   // loader + entry + package.json + rebuild
@@ -732,6 +781,15 @@ async function main() {
   writeEntry(outDir);
   writePackageJson(outDir, path.basename(bundlePath, '.js'));
   writeRebuild(outDir);
+  if (mirrorDir) {
+    // Pre-build the mirrored single bundle so DevTools Overrides / proxies can
+    // serve it at the original URL path immediately.
+    try {
+      require('child_process').execFileSync(process.execPath, ['rebuild.js'], { cwd: outDir, stdio: 'inherit' });
+    } catch (e) {
+      console.warn(`[packscope] failed to pre-build mirrored bundle: ${e.message}`);
+    }
+  }
   linkNodeModules(outDir, bundlePath);
 
   console.log(`[packscope] done. ${count} modules -> ${outDir}`);
@@ -960,17 +1018,25 @@ async function unpackScript(source, bundlePath, bundleUrl, outDir, args) {
 
 async function unpackEsModule(source, bundleUrl, outDir, args) {
   const entryBaseName = urlBasename(bundleUrl);
-  const entryPath = path.join(outDir, entryBaseName);
+  const mirrorSub = (args.devtools && isUrl(bundleUrl)) ? mirrorSubdir(bundleUrl) : '';
+  const mirrorDir = mirrorSub ? path.join(outDir, mirrorSub) : null;
+  const entryPath = mirrorDir ? path.join(mirrorDir, entryBaseName) : path.join(outDir, entryBaseName);
   const chunksDir = path.join(outDir, 'chunks');
   const assetsDir = path.join(outDir, 'assets');
-  ensureDir(chunksDir);
+  if (mirrorDir) {
+    ensureDir(mirrorDir);
+  } else {
+    ensureDir(chunksDir);
+  }
   ensureDir(assetsDir);
 
   const manifest = {
     bundleType: 'esm',
     source: entryBaseName,
-    entry: entryBaseName,
+    entry: path.relative(outDir, entryPath),
     baseUrl: bundleUrl,
+    mirrored: !!mirrorDir,
+    urlBaseDir: mirrorSub || null,
     chunks: [],
     assets: [],
     decomposed: [],
@@ -1017,7 +1083,7 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
       return;
     }
     seenUrls.add(url);
-    const localFile = allocateFile(url, chunksDir, urlToChunkFile);
+    const localFile = allocateFile(url, chunksDir, urlToChunkFile, mirrorDir ? outDir : null);
     try {
       const info = await downloadUrl(url, localFile);
       console.log(`[packscope]   + chunk ${path.basename(localFile)} (${info.size} bytes) <- ${url}`);
@@ -1080,8 +1146,9 @@ async function unpackEsModule(source, bundleUrl, outDir, args) {
 
   manifest.entrySources = entrySources;
   fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
-  writeEsModulePackageJson(outDir, entryBaseName);
-  writeEsModuleIndexHtml(outDir, entryBaseName);
+  const entryRel = path.relative(outDir, entryPath);
+  writeEsModulePackageJson(outDir, entryRel);
+  writeEsModuleIndexHtml(outDir, entryRel);
 
   console.log(`[packscope] done. ESM bundle unpacked to ${outDir}`);
   console.log(`[packscope] entry: ${entryBaseName}`);
@@ -1211,7 +1278,7 @@ function writeEsModulePackageJson(outDir, entryBaseName) {
   fs.writeFileSync(path.join(outDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
 }
 
-function writeEsModuleIndexHtml(outDir, entryBaseName) {
+function writeEsModuleIndexHtml(outDir, entryRel) {
   const html = `<!doctype html>
 <html>
 <head>
@@ -1219,7 +1286,7 @@ function writeEsModuleIndexHtml(outDir, entryBaseName) {
   <title>Unpacked ESM bundle</title>
 </head>
 <body>
-  <script type="module" src="./${entryBaseName.replace(/"/g, '&quot;')}"></script>
+  <script type="module" src="./${entryRel.replace(/"/g, '&quot;')}"></script>
 </body>
 </html>
 `;
@@ -1300,10 +1367,27 @@ function uniqueFilename(dir, wanted) {
   }
 }
 
-function allocateFile(url, dir, urlToFile) {
+function allocateFile(url, dir, urlToFile, mirrorRoot) {
   if (urlToFile.has(url)) return urlToFile.get(url);
-  const name = safeFilename(url);
-  const abs = uniqueFilename(dir, name);
+  let abs;
+  if (mirrorRoot) {
+    // Mirror the original URL (host + path, scheme/origin stripped) under
+    // mirrorRoot so the layout matches Chrome DevTools Local Overrides (and
+    // proxies): <outDir>/<host>/<path>.
+    let rel;
+    try {
+      const u = new URL(url);
+      rel = path.join(u.host, u.pathname.replace(/^\/+/, ''));
+    } catch {
+      rel = safeFilename(url);
+    }
+    rel = rel.replace(/[?#].*$/, '');
+    abs = path.join(mirrorRoot, rel);
+    ensureDir(path.dirname(abs));
+  } else {
+    const name = safeFilename(url);
+    abs = uniqueFilename(dir, name);
+  }
   urlToFile.set(url, abs);
   return abs;
 }
@@ -1511,7 +1595,7 @@ const acorn = require('acorn');
 
 const outDir = __dirname;
 const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'manifest.json'), 'utf8'));
-const outputName = process.argv[2] || 'bundle-unpacked.js';
+const outputName = process.argv[2] || (manifest.mirrored ? path.join(manifest.urlBaseDir || '', manifest.source) : 'bundle-unpacked.js');
 const outputPath = path.join(outDir, outputName);
 
 const parts = [fs.readFileSync(path.join(outDir, 'header.js'), 'utf8')];
@@ -1569,7 +1653,11 @@ function linkNodeModules(outDir, bundlePath) {
   }
 }
 
-main().catch((e) => {
-  console.error('[packscope] error:', e);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((e) => {
+    console.error('[packscope] error:', e);
+    process.exit(1);
+  });
+}
+
+module.exports = { mirrorSubdir, allocateFile, safeFilename, urlBasename };

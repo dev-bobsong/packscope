@@ -40,6 +40,14 @@ Options:
 - `--fetch-assets` — auto-download referenced source maps and other asset URLs found in the bundle (default ON for URL inputs, OFF for local file inputs).
 - `--no-fetch-assets` — skip downloading referenced assets.
 - `--entry <N>` — force entry module id (auto-detected otherwise).
+- `--devtools` — mirror the original site's URL paths into `<outDir>` (e.g.
+  `out/<host>/assets/index-*.js` instead of `out/index-*.js`). Chrome DevTools
+  Local Overrides stores files at `<folder>/<host>/<path>`, so this keeps the local
+  layout identical to the remote and lets you override the original URLs with zero
+  symlinks and a single origin (no mixed-content / CORS / SSR hydration mismatch,
+  and no parser-insertion race that breaks Tampermonkey-style DOM rewrites). For
+  ESM bundles the entry and chunks keep their relative import structure; for
+  webpack/rspack the rebuilt single bundle is written at the mirrored path.
 
 ## Output layout (`<outDir>/`)
 
@@ -140,6 +148,61 @@ in a browser:
 cd out && python3 -m http.server 8080
 # open http://localhost:8080/index.html
 ```
+
+## Browser dev workflow with DevTools Overrides
+
+For the fastest edit-and-reload loop inside a real browser, use Chrome DevTools
+**Local Overrides** together with the `--devtools` flag. packscope mirrors the
+original site's URL paths (including the host) into `out/`, so Chrome swaps the
+responses in place — **no local server, no symlinks, single origin**.
+
+```bash
+npx packscope --devtools https://example.com/assets/index-CLHtNMqj.js ./out
+```
+
+With `--devtools`, the unpacked files land at the same paths as the original
+URLs, e.g.:
+
+```
+out/example.com/assets/index-CLHtNMqj.js   # entry (was /assets/index-*.js on the site)
+out/example.com/assets/<chunk>.js           # each imported chunk
+```
+
+Then in Chrome:
+
+1. Open the page you want to debug (e.g. `https://example.com/chatPc`).
+2. Open DevTools (F12) → **Sources** panel → left sidebar → **Overrides**.
+3. Click **+ Select folder for overrides** and choose `./out` — the `out/`
+   directory itself, **not** `out/example.com/`.
+4. Click **Allow**, then enable **Enable Local Overrides**.
+5. Reload the page. Chrome now serves `https://example.com/assets/*` from
+   `out/example.com/assets/*`.
+
+See Google's guide: <https://developer.chrome.com/docs/devtools/overrides>
+
+### Edit and reload
+
+- **ES module bundles** (Vite / rollup / esbuild): edit any file under
+  `out/example.com/assets/` and reload — the change is live, no rebuild needed.
+- **webpack / rspack bundles**: edit `out/modules/<id>.js`, then regenerate the
+  single bundle (written to the mirrored path) and reload:
+
+  ```bash
+  node out/rebuild.js
+  ```
+
+### Why this is the recommended browser workflow
+
+- **No local server.** Chrome serves the overridden files straight from disk,
+  so `packscope serve` is not needed for this workflow.
+- **Single origin.** The file paths match the original URLs, so there is no
+  mixed-content, no CORS, and no SSR hydration mismatch.
+- **No parser-insertion race.** The swap happens at the network layer, so it
+  works even for parser-inserted `<script type="module">` tags (where a
+  Tampermonkey-style DOM rewrite would lose the race and load the original).
+
+> Note: `packscope serve` only matters if you instead prefer a proxy
+> (whistle / mitmproxy) that maps the origin to `127.0.0.1:8765`.
 
 ## Rebuild a single bundle (after editing modules/)
 
