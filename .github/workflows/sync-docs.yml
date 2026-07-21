@@ -1,0 +1,27 @@
+name: Sync Docs to Central Hub
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout packscope
+        uses: actions/checkout@v4
+
+      - name: Push docs to central hub
+        uses: dmnemec/copy_file_to_another_repo_action@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.CENTRAL_HUB_TOKEN }}
+        with:
+          source_file: 'docs/'
+          destination_repo: 'awareride/awareride.github.io'
+          destination_folder: 'src/content/docs/packscope/'
+          user_email: 'syncbot@awareride.com'
+          user_name: 'DocSyncBot'
+          commit_message: 'docs(packscope): sync from packscope'

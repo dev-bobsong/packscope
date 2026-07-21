@@ -12,9 +12,13 @@ A small Node CLI that unpacks a single ("mono") JavaScript bundle — from
 - **A manifest** (`manifest.json`) with module/chunk IDs, sizes, dependency edges, and best-effort inferred names.
 - **A rebuild script** (`rebuild.js`) that re-concatenates the (possibly edited) webpack/rspack module files back into a single runnable bundle.
 
+📖 **Full documentation:** [open.awareride.com/packscope/docs](https://open.awareride.com/packscope/docs/)
+
 ## Install
 
 ```bash
+git clone https://github.com/awareride/packscope.git
+cd packscope
 npm install          # installs acorn + escodegen + js-beautify
 ```
 
@@ -242,6 +246,20 @@ For that reason the **default** output keeps the original minified body slices �
 are still in separate, navigable files with documented param mappings, and they are
 **guaranteed executable**. Use `--beautify` when you want prettier code for reading,
 but be aware it is best-effort.
+
+## Documentation
+
+Full documentation is available at **[open.awareride.com/packscope/docs](https://open.awareride.com/packscope/docs/)**.
+
+| Page | Description |
+|------|-------------|
+| [Overview](https://open.awareride.com/packscope/docs/) | What Packscope does and why |
+| [Getting Started](https://open.awareride.com/packscope/docs/getting-started/) | Installation and first unpack |
+| [CLI Reference](https://open.awareride.com/packscope/docs/cli-reference/) | All options and examples |
+| [DevTools Overrides](https://open.awareride.com/packscope/docs/devtools-overrides/) | Chrome DevTools workflow |
+| [Architecture](https://open.awareride.com/packscope/docs/architecture/) | How Packscope works under the hood |
+
+Documentation source lives in [`docs/`](./docs/) and is synced to the central hub on every push to `main`.
 
 ## License
 

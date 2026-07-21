@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 64" width="220" height="64">
-  <text x="16" y="42" font-family="JetBrains Mono, Fira Code, Consolas, monospace" font-size="24" fill="#ffb338" font-weight="600">
-    &gt;
-  </text>
-  <text x="40" y="42" font-family="JetBrains Mono, Fira Code, Consolas, monospace" font-size="24" fill="#d1d5db" font-weight="500">
-    packscope
-  </text>
-</svg>

@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- simple grey circle background -->
-  <circle cx="256" cy="256" r="256" fill="#4a4a4a"/>
-
-  <!-- centered >ps wordmark with per-character colors -->
-  <text x="256" y="256" font-family="JetBrains Mono, Fira Code, Consolas, monospace" font-size="220" text-anchor="middle" dominant-baseline="middle">
-    <tspan fill="#ffb338" font-weight="600">&gt;</tspan><tspan fill="#d1d5db" font-weight="500">ps</tspan>
-  </text>
-</svg>
