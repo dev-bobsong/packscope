@@ -54,6 +54,13 @@ Production JavaScript bundles are opaque — a single 20 MB file with thousands 
 3. **Reconstruct** the loader: `header.js` + delegator-filled `__webpack_modules__` + original `webpack-runtime.js`. This reuses 100% of the original UMD + runtime.
 4. **Wire externals** through the same UMD path as the original bundle.
 
+## Documentation
+
+- [Getting Started](/packscope/docs/getting-started/) - install and unpack your first bundle
+- [CLI Reference](/packscope/docs/cli-reference/) - all options and examples
+- [DevTools Overrides](/packscope/docs/devtools-overrides/) - Chrome DevTools workflow
+- [Architecture](/packscope/docs/architecture/) - how Packscope works under the hood
+
 ## License
 
 MIT — see [LICENSE](https://github.com/awareride/packscope/blob/main/LICENSE).

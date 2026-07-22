@@ -259,7 +259,7 @@ Full documentation is available at **[open.awareride.com/packscope/docs](https:/
 | [DevTools Overrides](https://open.awareride.com/packscope/docs/devtools-overrides/) | Chrome DevTools workflow |
 | [Architecture](https://open.awareride.com/packscope/docs/architecture/) | How Packscope works under the hood |
 
-Documentation source lives in [`docs/`](./docs/) and is synced to the central hub on every push to `main`.
+Documentation source lives in [`docs/packscope/`](./docs/packscope/) - English pages in `en/` (the default locale and source of truth) plus Chinese translations in `zh/` - and is synced to the central hub on every push to `main`.
 
 ## License
 
