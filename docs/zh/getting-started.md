@@ -101,6 +101,6 @@ cd out && python3 -m http.server 8080
 
 ## 下一步
 
-- 阅读 [CLI 参考](/zh/packscope/docs/cli-reference/) 了解所有可用选项
-- 了解 [DevTools 覆盖](/zh/packscope/docs/devtools-overrides/) 以进行浏览器调试
-- 查看 [架构](/zh/packscope/docs/architecture/) 理解 Packscope 的底层工作原理
+- 阅读 [CLI 参考](./cli-reference.md) 了解所有可用选项
+- 了解 [DevTools 覆盖](./devtools-overrides.md) 以进行浏览器调试
+- 查看 [架构](./architecture.md) 理解 Packscope 的底层工作原理

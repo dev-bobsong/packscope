@@ -13,24 +13,27 @@
 # ships. No commit lands on main directly.
 #
 # Directory mapping:
-#   <external>/docs/<product>/   ->  awareride.github.io/src/content/docs/<product>/
+#   <external>/docs/   ->  awareride.github.io/src/content/docs/${PRODUCT}/
 #
-# The external docs/ tree uses docs/<product>/<locale>/<slug>.md
-# (e.g. docs/mytool/en/index.md, docs/mytool/zh/index.md), mirroring the hub's
-# src/content/docs/<product>/<locale>/<slug>.md exactly.
+# The external docs/ tree is flat by locale: docs/<locale>/<slug>.md
+# (e.g. docs/en/index.md, docs/zh/index.md). The product dimension is NOT in
+# the external repo - it is injected by sync from the PRODUCT env var below, so
+# the hub ends up with src/content/docs/${PRODUCT}/<locale>/<slug>.md. Keeping
+# the external repo flat lets relative markdown links resolve against docs/ on
+# GitHub (rather than docs/<product>/).
 #
-# IMPORTANT: the product name (the docs/<product>/ directory) must be listed in
-# the hub's src/content.config.ts `products` array, otherwise the synced
-# content won't have a collection. See SKILL.md "Registering the product".
+# IMPORTANT: set PRODUCT (below) to a name that is listed in the hub's
+# src/content.config.ts `products` array, otherwise the synced content won't
+# have a collection. See SKILL.md "Registering a new product".
 #
-# The copy uses `cp -L docs/. dest/` ("contents of docs/ into dest/") so the
-# result is always src/content/docs/<product>/..., never docs/docs/...
+# The copy uses `rsync -a docs/ dest/` ("contents of docs/ into dest/") so the
+# result is always src/content/docs/${PRODUCT}/..., never docs/docs/...
 #
 # Deleting retired content: the rsync copy only adds/overwrites; it never
 # removes hub-only files (to protect content from other projects). To retire
 # a page, delete it from docs/ here AND list it in sync-delete.list at the
-# repo root (one path per line, e.g. `docs/mytool/en/old-page.md`, or
-# `docs/mytool/en/legacy/` with a trailing slash to drop a whole directory).
+# repo root (one path per line, e.g. `docs/en/old-page.md`, or
+# `docs/en/legacy/` with a trailing slash to drop a whole directory).
 # If that file is present, the workflow runs scripts/apply-delete-list.mjs
 # after the copy to remove the listed paths from the hub. See SKILL.md
 # "Deleting content".
@@ -38,6 +41,9 @@
 name: Sync Docs to AwareRide Hub
 
 on:
+  push:
+    branches: [main]
+    paths: ['docs/**']
   workflow_dispatch:
 
 jobs:
@@ -61,8 +67,15 @@ jobs:
           SOURCE_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          # Set this to your product name (must be in the hub's products[]).
+          PRODUCT: packscope
         run: |
           set -euo pipefail
+          # PRODUCT must be set in the env: above to a hub-registered product.
+          if [ -z "${PRODUCT:-}" ]; then
+            echo 'PRODUCT env var is not set. Set it in the workflow env: block.' >&2
+            exit 1
+          fi
           HUB=awareride/awareride.github.io
           # Source repo is owner/name; sanitize the '/' for a branch name.
           SRC=$(printf '%s' "${SOURCE_REPO}" | tr '/' '-')
@@ -74,19 +87,21 @@ jobs:
           git clone --single-branch --branch main \
             "https://x-access-token:${API_TOKEN_GITHUB}@github.com/${HUB}.git" "$CLONE_DIR"
 
-          # Copy CONTENTS of docs/ into src/content/docs/ via rsync.
-          # rsync's `docs/` source means "the contents of docs", so this
-          # never creates src/content/docs/docs/, regardless of whether
-          # the destination dir already exists on the hub.
-          mkdir -p "$CLONE_DIR/src/content/docs"
-          rsync -a docs/ "$CLONE_DIR/src/content/docs/"
+          # Copy CONTENTS of docs/ into src/content/docs/${PRODUCT}/ via rsync.
+          # rsync's `docs/` source means "the contents of docs", so this never
+          # nests (no docs/docs/), regardless of whether the destination dir
+          # already exists on the hub. The ${PRODUCT}/ segment is created here.
+          DEST="$CLONE_DIR/src/content/docs/${PRODUCT}"
+          mkdir -p "$DEST"
+          rsync -a docs/ "$DEST/"
 
           # Apply optional deletions from $GITHUB_WORKSPACE/sync-delete.list.
           # Only `docs/...` entries are processed here; `posts/...` entries are
           # handled by sync-posts.yml. Missing file = no-op. Runs after rsync so
-          # deletions win over the copy.
+          # deletions win over the copy. The collection dir includes ${PRODUCT},
+          # so `docs/en/foo.md` -> src/content/docs/${PRODUCT}/en/foo.md.
           node .agents/skills/awareride-content-sync/scripts/apply-delete-list.mjs \
-            "$CLONE_DIR/src/content/docs" docs
+            "$DEST" docs
 
           cd "$CLONE_DIR"
           git checkout -b "$BRANCH"

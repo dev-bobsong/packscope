@@ -56,10 +56,10 @@ Production JavaScript bundles are opaque — a single 20 MB file with thousands 
 
 ## Documentation
 
-- [Getting Started](/packscope/docs/getting-started/) - install and unpack your first bundle
-- [CLI Reference](/packscope/docs/cli-reference/) - all options and examples
-- [DevTools Overrides](/packscope/docs/devtools-overrides/) - Chrome DevTools workflow
-- [Architecture](/packscope/docs/architecture/) - how Packscope works under the hood
+- [Getting Started](./getting-started.md) - install and unpack your first bundle
+- [CLI Reference](./cli-reference.md) - all options and examples
+- [DevTools Overrides](./devtools-overrides.md) - Chrome DevTools workflow
+- [Architecture](./architecture.md) - how Packscope works under the hood
 
 ## License
 

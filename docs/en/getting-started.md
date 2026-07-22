@@ -101,6 +101,6 @@ cd out && python3 -m http.server 8080
 
 ## Next Steps
 
-- Read the [CLI Reference](/packscope/docs/cli-reference/) for all available options
-- Learn about [DevTools Overrides](/packscope/docs/devtools-overrides/) for browser debugging
-- Check out the [Architecture](/packscope/docs/architecture/) to understand how Packscope works under the hood
+- Read the [CLI Reference](./cli-reference.md) for all available options
+- Learn about [DevTools Overrides](./devtools-overrides.md) for browser debugging
+- Check out the [Architecture](./architecture.md) to understand how Packscope works under the hood

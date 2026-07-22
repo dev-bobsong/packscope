@@ -70,7 +70,7 @@ out/example.com/assets/index-CLHtNMqj.js
 out/example.com/assets/<chunk>.js
 ```
 
-See the [DevTools Overrides](/packscope/docs/devtools-overrides/) guide for setup instructions.
+See the [DevTools Overrides](./devtools-overrides.md) guide for setup instructions.
 
 ## Examples
 

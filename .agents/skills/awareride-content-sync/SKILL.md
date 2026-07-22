@@ -12,8 +12,12 @@ sync it into the hub via a GitHub Action.
 
 The hub is an Astro 7 static site whose content lives under `src/content/`
 with a locale-prefixed i18n layout: default locale `en` (no URL prefix) and
-`zh` under `/zh/...`. The external project mirrors that layout 1:1, so sync
-is a plain directory copy - no path rewriting.
+`zh` under `/zh/...`. The external project mirrors the **locale** layout
+(`posts/<locale>/...`, `docs/<locale>/...`). For docs, the product dimension
+is injected at sync time from the `PRODUCT` env var (see "Syncing"), so the
+external repo stays flat - `docs/en/foo.md`, not `docs/<product>/en/foo.md`.
+This keeps relative markdown links working on GitHub: they resolve against
+`docs/`, not `docs/<product>/`.
 
 ## The layout (mirror the hub)
 
@@ -27,12 +31,11 @@ is a plain directory copy - no path rewriting.
     zh/
       hello-world.md            <- SAME filename as en/ (slug contract)
   docs/
-    mytool/                     <- product name; must be in hub's products[]
-      en/
-        index.md                <- the docs landing page for this product
-        getting-started.md
-      zh/
-        index.md                <- optional; falls back to en if absent
+    en/                         <- product is set via PRODUCT env var in sync-docs.yml
+      index.md                <- the product's docs landing page
+      getting-started.md
+    zh/
+      index.md                <- optional; falls back to en if absent
   .agents/skills/awareride-content-sync/      <- this skill (copied in)
     SKILL.md
     scripts/validate.mjs
@@ -40,8 +43,10 @@ is a plain directory copy - no path rewriting.
     templates/sync-docs.yml
 ```
 
-`posts/` and `docs/` map directly onto the hub's
-`src/content/posts/` and `src/content/docs/`, so sync copies the whole tree.
+`posts/` maps onto the hub's `src/content/posts/`; `docs/` maps onto
+`src/content/docs/${PRODUCT}/` (the product segment is added by sync from
+the `PRODUCT` env var, not present in the external repo), so sync copies the
+whole locale tree.
 
 ## Frontmatter schemas
 
@@ -59,7 +64,7 @@ draft: false                            # optional, defaults to false; drafts ar
 ---
 ```
 
-### Docs (`docs/<product>/<locale>/<slug>.md`)
+### Docs (`docs/<locale>/<slug>.md`)
 
 ```yaml
 ---
@@ -84,8 +89,8 @@ A file's **slug** is its path relative to the locale dir, without `.md`:
 | `posts/en/hello-world.md` | `hello-world` |
 | `posts/zh/hello-world.md` | `hello-world` |
 | `posts/en/packscope/2025-07-20-why-packscope.md` | `packscope/2025-07-20-why-packscope` |
-| `docs/mytool/en/getting-started.md` | `getting-started` |
-| `docs/mytool/zh/getting-started.md` | `getting-started` |
+| `docs/en/getting-started.md` | `getting-started` |
+| `docs/zh/getting-started.md` | `getting-started` |
 
 **The slug must be byte-identical across locales.** The hub's fallback renders
 the `en` body when a `zh` page is missing, matched by slug. `en/getting-started.md`
@@ -158,7 +163,9 @@ Copy from `awareride-content-sync/templates/`:
 - If you contribute posts: copy `sync-posts.yml` to
   `.github/workflows/sync-posts.yml`.
 - If you contribute docs: copy `sync-docs.yml` to
-  `.github/workflows/sync-docs.yml`.
+  `.github/workflows/sync-docs.yml`, and set the `PRODUCT` env var in it to
+  your product name (e.g. `packscope`). The product must be registered on
+  the hub (see "Registering a new product").
 
 Both run validation first, then sync. They trigger on pushes to `main` that
 touch `posts/**` or `docs/**` respectively, and can be run manually via the
@@ -169,13 +176,18 @@ Actions tab ("workflow_dispatch").
 | External | Hub |
 |----------|-----|
 | `posts/` | `src/content/posts/` |
-| `docs/<product>/` | `src/content/docs/<product>/` |
+| `docs/` | `src/content/docs/${PRODUCT}/` |
+
+The product segment (`${PRODUCT}/`) is added by sync from the `PRODUCT` env
+var; it is **not** present in the external repo. This is what lets relative
+markdown links inside docs keep resolving against `docs/` on GitHub.
 
 The sync is a merge copy (not a mirror): files present in this project are
-added or overwritten in the hub's `src/content/posts/` / `src/content/docs/`;
-files that exist only on the hub are left untouched by the copy. This protects
-content contributed by other projects from being removed when one project
-restructures. To retire a page, see "Deleting content" below.
+added or overwritten in the hub's `src/content/posts/` /
+`src/content/docs/${PRODUCT}/`; files that exist only on the hub are left
+untouched by the copy. This protects content contributed by other projects
+from being removed when one project restructures. To retire a page, see
+"Deleting content" below.
 
 ### 4. Deleting content (sync-delete.list)
 
@@ -188,14 +200,15 @@ use `sync-delete.list` at the external project root:
 # Blank lines and '#' comments are ignored.
 posts/en/old-post.md
 posts/zh/old-post.md
-docs/mytool/en/legacy-page.md
-docs/mytool/en/legacy/        # trailing slash = drop the whole directory
+docs/en/legacy-page.md
+docs/en/legacy/        # trailing slash = drop the whole directory
 ```
 
 Rules:
 
-- Paths are relative to the repo root and use the same mapping as the copy
-  (`posts/...` -> `src/content/posts/...`, `docs/...` -> `src/content/docs/...`).
+- Paths are relative to the repo root and match the external file path, so
+  they map through the copy (`posts/...` -> `src/content/posts/...`,
+  `docs/...` -> `src/content/docs/${PRODUCT}/...`).
 - A single `sync-delete.list` can mix `posts/` and `docs/` entries. The
   `sync-posts` workflow only processes `posts/...` lines and the `sync-docs`
   workflow only processes `docs/...` lines; the other namespace is skipped.
@@ -230,7 +243,8 @@ project can do via sync. When you introduce a new product:
    `src/pages/zh/<product>/docs/`. The hub's own
    `.pi/skills/awareride-content/SKILL.md` documents this for whoever owns the
    hub repo.
-2. Once merged, your `docs/<product>/` content will sync and render.
+2. Once merged, set `PRODUCT` to that name in your `sync-docs.yml` and your
+   `docs/` content will sync and render.
 
 Posts have no registration step - dropping a `.md` file into
 `posts/<locale>/` is enough; the hub's routes already serve it.
@@ -269,11 +283,11 @@ node .agents/skills/awareride-content-sync/scripts/apply-delete-list.mjs \
 
 # Retire content: list it in sync-delete.list at the repo root
 #   posts/en/old-post.md
-#   docs/mytool/en/legacy/    (trailing slash = whole dir)
+#   docs/en/legacy/    (trailing slash = whole dir)
 
-# Add a doc page to product "mytool" (must be registered on the hub)
-#   docs/mytool/en/my-page.md
-#   docs/mytool/zh/my-page.md   (optional)
+# Add a doc page for product PRODUCT (set in sync-docs.yml; must be registered on the hub)
+#   docs/en/my-page.md
+#   docs/zh/my-page.md   (optional)
 
 # Workflows live at .github/workflows/sync-{posts,docs}.yml
 # Secret on THIS repo: DOCS_CENTRAL_HUB_TOKEN

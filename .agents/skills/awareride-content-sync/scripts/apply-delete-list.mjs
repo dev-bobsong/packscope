@@ -19,10 +19,13 @@
 //
 // The list is read from "$GITHUB_WORKSPACE/sync-delete.list" if it exists; if
 // not, the script is a no-op. Each non-empty, non-comment line is a path
-// relative to the external project root, using the same mapping as the sync
-// copy:
-//   posts/en/old-post.md    ->  src/content/posts/en/old-post.md   (file)
-//   docs/mytool/en/legacy/  ->  src/content/docs/mytool/en/legacy/ (whole dir)
+// relative to the external project root, matching the external file path so
+// it maps through the copy:
+//   posts/en/old-post.md  ->  src/content/posts/en/old-post.md         (file)
+//   docs/en/legacy/       ->  src/content/docs/${PRODUCT}/en/legacy/   (whole dir)
+// For docs the ${PRODUCT}/ segment is part of the <hub-collection-dir> arg
+// passed by sync-docs.yml (already includes the product), so the list entry
+// itself stays flat (docs/en/..., mirroring the external repo).
 // A trailing slash means "delete the whole directory".
 //
 // Blank lines and lines starting with '#' are ignored. Unsafe paths (parent

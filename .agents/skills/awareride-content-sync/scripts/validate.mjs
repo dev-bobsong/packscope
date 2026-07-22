@@ -114,43 +114,45 @@ function validateDocs() {
   const base = join(ROOT, 'docs');
   if (!existsSync(base)) { warn('no docs/ directory - skipping docs validation'); return; }
 
-  // docs/<product>/<locale>/*.md
-  const products = readdirSync(base).filter(p => statSync(join(base, p)).isDirectory());
-  for (const product of products) {
-    const pBase = join(base, product);
-    const locales = SUPPORTED_LOCALES.filter(l => existsSync(join(pBase, l)));
-    if (locales.length === 0) {
-      warn(`docs/${product}/ has no locale subdirs (en/, zh/)`);
-      continue;
-    }
-    const byLocale = {};
-    for (const l of locales) {
-      byLocale[l] = listMd(join(pBase, l)).map(f => ({ file: f, slug: slugKey(f, l, pBase) }));
-    }
-    const defaultSlugs = new Set((byLocale[DEFAULT_LOCALE] || []).map(d => d.slug));
-    if (!byLocale[DEFAULT_LOCALE]) {
-      fail(`docs/${product}/${DEFAULT_LOCALE}/ is missing - the default locale must exist`);
-    }
-    for (const l of locales) {
-      if (l === DEFAULT_LOCALE) continue;
-      for (const { file, slug } of byLocale[l]) {
-        if (!defaultSlugs.has(slug)) {
-          fail(`docs/${product}/${l}/${slug}.md has no matching ${DEFAULT_LOCALE} counterpart`);
-        }
-      }
-    }
-    for (const l of locales) {
-      for (const { file } of byLocale[l]) {
-        const fm = parseFrontmatter(file);
-        if (!fm) { fail(`${relative(ROOT, file)}: missing frontmatter`); continue; }
-        if (!fm.title) fail(`${relative(ROOT, file)}: missing required 'title'`);
-        if (fm.order !== undefined && isNaN(Number(fm.order))) {
-          fail(`${relative(ROOT, file)}: invalid order '${fm.order}'`);
-        }
-      }
-    }
-    console.log(`docs/${product}: ${locales.length} locale(s), ${Object.values(byLocale).flat().length} file(s)`);
+  // docs/<locale>/*.md  (the product dimension is a sync-time concern,
+  // configured via the PRODUCT env var in sync-docs.yml; validation is
+  // product-agnostic.)
+  const locales = SUPPORTED_LOCALES.filter(l => existsSync(join(base, l)));
+  if (locales.length === 0) {
+    warn('docs/ exists but has no locale subdirs (en/, zh/)');
+    return;
   }
+
+  const byLocale = {};
+  for (const l of locales) {
+    byLocale[l] = listMd(join(base, l)).map(f => ({ file: f, slug: slugKey(f, l, base) }));
+  }
+
+  const defaultSlugs = new Set((byLocale[DEFAULT_LOCALE] || []).map(d => d.slug));
+  if (!byLocale[DEFAULT_LOCALE]) {
+    fail(`docs/${DEFAULT_LOCALE}/ is missing - the default locale must exist`);
+  }
+  for (const l of locales) {
+    if (l === DEFAULT_LOCALE) continue;
+    for (const { file, slug } of byLocale[l]) {
+      if (!defaultSlugs.has(slug)) {
+        fail(`docs/${l}/${slug}.md has no matching ${DEFAULT_LOCALE} counterpart`);
+      }
+    }
+  }
+
+  for (const l of locales) {
+    for (const { file } of byLocale[l]) {
+      const fm = parseFrontmatter(file);
+      if (!fm) { fail(`${relative(ROOT, file)}: missing frontmatter`); continue; }
+      if (!fm.title) fail(`${relative(ROOT, file)}: missing required 'title'`);
+      if (fm.order !== undefined && isNaN(Number(fm.order))) {
+        fail(`${relative(ROOT, file)}: invalid order '${fm.order}'`);
+      }
+    }
+  }
+
+  console.log(`docs: ${locales.length} locale(s), ${Object.values(byLocale).flat().length} file(s)`);
 }
 
 console.log('Validating content for AwareRide sync...\n');

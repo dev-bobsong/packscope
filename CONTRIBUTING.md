@@ -16,9 +16,8 @@ npm install
 packscope/
 ├── packscope.js         # Main CLI entry point
 ├── docs/                # Documentation (synced to open.awareride.com)
-│   └── packscope/
-│       ├── en/          # English (default locale, source of truth)
-│       └── zh/          # Chinese (incremental; missing pages fall back to en)
+│   ├── en/          # English (default locale, source of truth)
+│   └── zh/          # Chinese (incremental; missing pages fall back to en)
 ├── examples/            # Sample bundles for testing
 ├── test/                # Test suite
 ├── .github/
@@ -45,9 +44,12 @@ Tests use Node's built-in test runner. Test files live in `test/**/*.test.js`.
 
 ## Documentation
 
-Documentation lives in `docs/packscope/<locale>/` as Markdown files with
-YAML frontmatter, mirroring the AwareRide content hub layout 1:1
-(`docs/packscope/en/...` -> `src/content/docs/packscope/en/...`).
+Documentation lives in `docs/<locale>/` as Markdown files with
+YAML frontmatter. The product segment is injected at sync time from
+the `PRODUCT` env var in `.github/workflows/sync-docs.yml`, so the
+external repo stays flat by locale
+(`docs/en/...` -> `src/content/docs/packscope/en/...` on the hub).
+This keeps relative markdown links resolving against `docs/` on GitHub.
 
 ```yaml
 ---
@@ -63,8 +65,9 @@ order: 1
 - The filename (minus `.md`, relative to the locale dir) is the **slug** and
   must be byte-identical across locales (e.g. `en/getting-started.md` and
   `zh/getting-started.md`). Never translate the filename.
-- Use absolute paths for internal links: `/packscope/docs/getting-started/`
-  in `en/`, and `/zh/packscope/docs/getting-started/` in `zh/`.
+- Use relative paths for internal links (e.g. `./getting-started.md`);
+  they resolve to sibling `.md` files on GitHub and to the corresponding
+  page route on the hub.
 
 These files are automatically synced to the central hub at
 [open.awareride.com/packscope/docs/](https://open.awareride.com/packscope/docs/)
@@ -78,8 +81,8 @@ node .agents/skills/awareride-content-sync/scripts/validate.mjs
 
 When adding a new docs page:
 
-1. Create the `.md` file in `docs/packscope/en/` first (required), then
-   optionally `docs/packscope/zh/` with the **same filename**.
+1. Create the `.md` file in `docs/en/` first (required), then
+   optionally `docs/zh/` with the **same filename**.
 2. Set an appropriate `order` value (`index.md` is always sorted first).
 3. Use the locale-correct absolute paths for internal links.
 
